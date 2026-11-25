@@ -32,6 +32,8 @@ The script downloads the latest release for your platform, verifies its SHA-256 
 cargo install --locked --git https://github.com/ChenezDigital/gg
 ```
 
+**Updating:** `gg self-update`. `gg` checks for a new release once a day and prints a one-line hint when there is one (turn it off with `GG_NO_UPDATE_CHECK=1`).
+
 Windows is not supported yet. See [docs/installation.md](docs/installation.md) for pinned versions, checksum and provenance verification, shell completions and uninstalling.
 
 ## Quick start

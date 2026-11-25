@@ -8,3 +8,4 @@ pub mod interactive;
 pub mod ssh;
 pub mod tui;
 pub mod ui;
+pub mod update;

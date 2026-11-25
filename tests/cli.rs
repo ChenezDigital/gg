@@ -23,6 +23,7 @@ impl Env {
         let h = self.home.path();
         cmd.env("HOME", h)
             .env("XDG_CONFIG_HOME", h.join(".config"))
+            .env("XDG_CACHE_HOME", h.join(".cache"))
             .env("GIT_CONFIG_GLOBAL", h.join("gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_SSH_COMMAND", "false")
@@ -340,4 +341,16 @@ fn push_repairs_direct_github_remote() {
         e.git(&repo, &["remote", "get-url", "origin"]),
         "git@github-work:octocat/gg.git"
     );
+}
+
+#[test]
+fn self_update_leaves_development_builds_alone() {
+    let env = Env::new();
+    let out = env.gg(env.home.path(), &["self-update"]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("development build"), "{err}");
+    // Output is not a terminal, so no background check and no cache file.
+    env.ok(env.home.path(), &["profile", "list"]);
+    assert!(!env.home.path().join(".cache/gg").exists());
 }

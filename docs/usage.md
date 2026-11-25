@@ -182,6 +182,7 @@ Use `gg git <args>` to run Git commands whose names `gg` uses itself, such as `g
 | Command | Description |
 |---|---|
 | `gg completions <bash\|zsh\|fish\|elvish\|powershell>` | Prints a completion script |
+| `gg self-update [--check]` | Installs the latest release, after verifying its checksum; `--check` only reports. See [installation](installation.md#updating) |
 | `gg --version` | Version |
 
 Exit codes: `0` success; `1` a `gg` error (printed as `gg: …`); otherwise the exit code of the Git or SSH command that was run (`128+n` if it was killed by signal `n`). Cancelled prompts in the dashboard are not errors.

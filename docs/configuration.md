@@ -24,6 +24,7 @@ The file is created on first save, with its parent directory.
 
 ```toml
 default = "personal"
+update_check = true                   # optional; false turns off the daily new-release check
 
 [profiles.personal]
 name = "Jane Doe"                 # user.name
@@ -129,6 +130,9 @@ ssh-keygen -t ed25519 -C "<email>" -f <ssh_key>      # -N "" with --no-passphras
 | `GG_CONFIG` | Path of the config file |
 | `XDG_CONFIG_HOME` | Base config directory (absolute paths only) |
 | `HOME` | Used for `~`, `~/.ssh` and the default config directory |
+| `GG_NO_UPDATE_CHECK` | Set to `1` to turn off the daily new-release check |
+| `CI` | When set, the new-release check is skipped |
+| `XDG_CACHE_HOME` | Base cache directory for `gg/latest-version` (Linux) |
 | `NO_COLOR` | Disables colors (also disabled when the output is not a terminal) |
 | `GG_VERSION`, `GG_INSTALL_DIR`, `GG_REPO`, `GG_BASE_URL` | Installer only; see [installation](installation.md#install-script) |
 

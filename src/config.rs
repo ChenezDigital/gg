@@ -68,6 +68,9 @@ impl Profile {
 pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
+    /// `false` turns off the daily check for new releases.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_check: Option<bool>,
     #[serde(default)]
     pub profiles: BTreeMap<String, Profile>,
 }

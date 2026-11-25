@@ -14,7 +14,8 @@ src/
 ├── commands.rs     Command implementations (whoami, use, clone, remote, profile, passthrough)
 ├── interactive.rs  Prompts (dialoguer), setup wizard, dashboard actions, terminal state
 ├── tui.rs          Dashboard (ratatui + crossterm)
-└── ui.rs           Shared colors and message formatting (console)
+├── ui.rs           Shared colors and message formatting (console)
+└── update.rs       self-update and the daily new-release notice
 tests/cli.rs        End-to-end tests of the binary in an isolated HOME
 fuzz/               cargo-fuzz targets: remote_url, ssh_config, clone_args
 ```
@@ -101,6 +102,22 @@ Lines are kept byte for byte, including `\r` in CRLF files. `strip_block` remove
 `sync` writes a backup and then the new content. A newly created file gets mode 600, and `~/.ssh` is created with mode 700. It is idempotent: running it again produces identical bytes.
 
 `ssh::test` runs `ssh -T -o ConnectTimeout=10 git@<alias>` and searches the output for GitHub's `Hi <login>!` greeting.
+
+## Updates
+
+`update.rs` uses the system `curl`/`wget`, `sha256sum`/`shasum` and `tar`, as `install.sh` does, so it adds no HTTP, TLS or crypto crates.
+
+- **`latest`** reads `tag_name` from `api.github.com/repos/ChenezDigital/gg/releases/latest`. That endpoint never returns pre-releases.
+- **`self_update`** works in this order:
+  1. Refuses binaries owned by cargo, Homebrew or Nix, and development builds in `target/` (`managed_by`), and prints their update command.
+  2. Picks the asset from the compile-time OS and architecture.
+  3. Downloads the archive and its `.sha256` into a temporary directory.
+  4. `install_archive` verifies the checksum, unpacks, and requires `<new> --version` to print `gg <expected>`.
+  5. Copies the new binary to a staging file next to the old one, sets mode `755`, and `rename`s it over the old one. That keeps the swap atomic, and it works while the old binary is running.
+- **`notify`** runs in `main` after a command succeeds:
+  1. If the cached latest version (`latest-version` in the user cache directory) is newer, it prints a hint to stderr.
+  2. If the cache is older than 24 hours, it records the attempt and spawns `gg __update-check` (hidden) with null stdio in its own process group. That process refreshes the cache, so the command never waits for the network, and Ctrl-C doesn't reach it.
+  3. It does nothing unless stderr is a terminal, or when `CI` or `GG_NO_UPDATE_CHECK` is set, or when `update_check = false`.
 
 ## Dashboard and the terminal
 
