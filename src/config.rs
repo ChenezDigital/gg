@@ -84,17 +84,28 @@ pub fn config_path() -> Result<PathBuf> {
     let dir = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
-        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        .or_else(|| home_dir().map(|h| h.join(".config")))
         .context("cannot determine config directory")?;
     Ok(dir.join("gg").join("config.toml"))
 }
 
+/// The user's home directory. On Windows `%USERPROFILE%` wins, as it does for OpenSSH and Git.
+pub fn home_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    if let Some(p) = std::env::var_os("USERPROFILE").filter(|p| !p.is_empty()) {
+        return Some(p.into());
+    }
+    dirs::home_dir()
+}
+
 pub fn expand_tilde(p: &str) -> PathBuf {
     if p == "~" {
-        return dirs::home_dir().unwrap_or_default();
+        return home_dir().unwrap_or_default();
     }
-    if let Some(rest) = p.strip_prefix("~/")
-        && let Some(home) = dirs::home_dir()
+    if let Some(rest) = p
+        .strip_prefix("~/")
+        .or_else(|| p.strip_prefix("~\\").filter(|_| cfg!(windows)))
+        && let Some(home) = home_dir()
     {
         return home.join(rest);
     }

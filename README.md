@@ -24,7 +24,15 @@ curl -fsSL https://raw.githubusercontent.com/ChenezDigital/gg/main/install.sh | 
 
 The script downloads the latest release for your platform, verifies its SHA-256 checksum and installs `gg` to `~/.local/bin`.
 
-**Manual download:** grab `gg-<target>.tar.gz` from [Releases](https://github.com/ChenezDigital/gg/releases) (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `x86_64-apple-darwin`, `aarch64-apple-darwin`) and put `gg` on your `PATH`.
+**Windows** (x64 and ARM64; Windows PowerShell 5.1 or PowerShell 7+):
+
+```powershell
+irm https://raw.githubusercontent.com/ChenezDigital/gg/main/install.ps1 | iex
+```
+
+It verifies the checksum, installs `gg.exe` to `%LOCALAPPDATA%\Programs\gg` and adds that folder to your user `PATH`.
+
+**Manual download:** grab `gg-<target>.tar.gz` (`.zip` on Windows) from [Releases](https://github.com/ChenezDigital/gg/releases) (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`) and put `gg` on your `PATH`.
 
 **From source** (Rust 1.88+):
 
@@ -34,7 +42,7 @@ cargo install --locked --git https://github.com/ChenezDigital/gg
 
 **Updating:** `gg self-update`. `gg` checks for a new release once a day and prints a one-line hint when there is one (turn it off with `GG_NO_UPDATE_CHECK=1`).
 
-Windows is not supported yet. See [docs/installation.md](docs/installation.md) for pinned versions, checksum and provenance verification, shell completions and uninstalling.
+See [docs/installation.md](docs/installation.md) for pinned versions, checksum and provenance verification, shell completions and uninstalling.
 
 ## Quick start
 

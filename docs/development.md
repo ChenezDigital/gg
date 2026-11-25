@@ -34,6 +34,13 @@ Optional checks for workflow and installer changes:
 actionlint                       # workflow syntax and expressions
 zizmor .github/workflows         # workflow security (pipx install zizmor)
 shellcheck --shell=sh install.sh
+cargo clippy --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings   # Windows code paths, from Linux/macOS (rustup target add x86_64-pc-windows-msvc)
+```
+
+`install.ps1` must stay compatible with Windows PowerShell 5.1: no `??`, `?:`, `&&`/`||` pipeline chains or `-Parallel`; always pass `-UseBasicParsing`; keep everything inside the `& { }` block and use `throw`, not `exit`, because `irm | iex` runs in the caller's session. Keep the file ASCII-only (5.1 reads BOM-less scripts in the ANSI code page). CI runs it under both 5.1 and 7 (`install.ps1 (PowerShell …)` jobs). To check syntax locally with PowerShell 7 and PSScriptAnalyzer:
+
+```powershell
+Invoke-ScriptAnalyzer install.ps1 -Settings @{ Rules = @{ PSUseCompatibleSyntax = @{ Enable = $true; TargetVersions = @('5.1', '7.0') } } }
 ```
 
 Code style: `rustfmt` defaults with `max_width = 120` (`rustfmt.toml`), clippy clean, and comments only where intent isn't obvious.
@@ -145,11 +152,13 @@ Releases are built entirely by GitHub Actions from a tag.
       | `aarch64-unknown-linux-musl` | `ubuntu-24.04-arm` | Static, any distribution (Raspberry Pi 4/5, Graviton, …) |
       | `x86_64-apple-darwin` | `macos-15-intel` | Intel Macs |
       | `aarch64-apple-darwin` | `macos-15` | Apple silicon |
+      | `x86_64-pc-windows-msvc` | `windows-2025` | Static C runtime (`.cargo/config.toml`) |
+      | `aarch64-pc-windows-msvc` | `windows-11-arm` | Static C runtime |
 
-      Each job runs the test suite for its target, builds with `--release --locked` (LTO, stripped), and packages `gg-<target>.tar.gz` (binary, LICENSE, README, completions) with a `.sha256`. It also creates a signed **build provenance attestation** (Sigstore, SLSA) for the archive and publishes its bundle as `gg-<target>.tar.gz.sigstore.json`.
+      Each job runs the test suite for its target, builds with `--release --locked` (LTO, stripped), and packages `gg-<target>.tar.gz` (`.zip` for Windows, made with Windows' own `tar.exe`) containing the binary, LICENSE, README and completions, with a `.sha256`. It also creates a signed **build provenance attestation** (Sigstore, SLSA) for the archive and publishes its bundle as `<archive>.sigstore.json`.
    3. **Publish**: collects the archives, writes `SHA256SUMS`, and creates the GitHub release with generated notes. Tags with a hyphen (`v0.2.0-rc.1`) are marked as pre-releases.
 
-Asset names contain no version, so `releases/latest/download/gg-<target>.tar.gz` always points at the newest release; `install.sh` relies on this.
+Asset names contain no version, so `releases/latest/download/gg-<target>.tar.gz` (or `.zip`) always points at the newest release; `install.sh` and `install.ps1` rely on this.
 
 If a release job fails, fix the problem, delete the tag (`git push --delete origin v0.2.0 && git tag -d v0.2.0`) and any draft release, then tag again.
 
@@ -157,9 +166,9 @@ If a release job fails, fix the problem, delete the tag (`git push --delete orig
 
 The macOS binaries are not notarized. Files downloaded with a browser get the quarantine attribute; `install.sh` uses curl, so they don't. See [installation](installation.md#manual-install). Notarization needs an Apple Developer account and can be added to the build job later.
 
-### Windows
+### Windows signing
 
-Not built yet. Adding it requires replacing the Unix-only parts (termios via `libc`, file modes, `~/.ssh` paths, `install.sh`), then adding `x86_64-pc-windows-msvc` to the matrix with a `.zip` archive.
+The Windows binaries are not Authenticode-signed, so SmartScreen may warn when `gg.exe` is downloaded with a browser ("Unblock" in the file's Properties, or use `install.ps1`, whose downloads are not marked). Signing needs a code-signing certificate and can be added to the build job later.
 
 ## Repository settings
 

@@ -1,7 +1,8 @@
 //! `gg self-update` and the once-a-day "new version available" notice.
 //!
-//! Downloads go through the system `curl` (or `wget`), checksums through `sha256sum` (or `shasum`) and
-//! unpacking through `tar`, the same tools `install.sh` uses, so no HTTP or crypto crates are needed.
+//! Downloads go through the system `curl` (or `wget`) and unpacking through `tar`, the same tools
+//! `install.sh` uses, so no HTTP or TLS crates are needed. Windows 10 and later ship both
+//! (`curl.exe`, and `tar.exe` which also reads `.zip`). Checksums are computed in-process.
 
 use std::fmt;
 use std::fs;
@@ -66,13 +67,21 @@ pub fn target() -> Option<&'static str> {
         ("linux", "aarch64") => Some("aarch64-unknown-linux-musl"),
         ("macos", "x86_64") => Some("x86_64-apple-darwin"),
         ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("windows", "x86_64") => Some("x86_64-pc-windows-msvc"),
+        ("windows", "aarch64") => Some("aarch64-pc-windows-msvc"),
         _ => None,
     }
 }
 
+/// Release archive name: `.zip` for Windows, `.tar.gz` elsewhere.
+pub fn archive_name(target: &str) -> String {
+    let ext = if target.contains("-windows-") { "zip" } else { "tar.gz" };
+    format!("gg-{target}.{ext}")
+}
+
 /// For binaries that another tool owns, the command that updates them instead.
 pub fn managed_by(exe: &Path) -> Option<String> {
-    let s = exe.to_string_lossy();
+    let s = exe.to_string_lossy().replace('\\', "/");
     if s.contains("/.cargo/bin/") {
         Some(format!(
             "cargo install --locked --force --git https://github.com/{REPO}"
@@ -183,7 +192,7 @@ impl Drop for TempDir {
     }
 }
 
-fn run_in(dir: &Path, program: &str, args: &[&str]) -> std::io::Result<bool> {
+fn run_in(dir: &Path, program: &std::ffi::OsStr, args: &[&str]) -> std::io::Result<bool> {
     Command::new(program)
         .args(args)
         .current_dir(dir)
@@ -193,23 +202,45 @@ fn run_in(dir: &Path, program: &str, args: &[&str]) -> std::io::Result<bool> {
         .map(|s| s.success())
 }
 
-/// Verifies `gg-<target>.tar.gz` in `dir` against its `.sha256`, unpacks it, checks that the new binary
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Whether `file` matches the first field of a `sha256sum`-style line in `sums`.
+fn checksum_ok(file: &Path, sums: &Path) -> Result<bool> {
+    let expected = fs::read_to_string(sums).with_context(|| format!("reading {}", sums.display()))?;
+    let expected = expected.split_whitespace().next().unwrap_or_default();
+    let data = fs::read(file).with_context(|| format!("reading {}", file.display()))?;
+    Ok(expected.eq_ignore_ascii_case(&sha256_hex(&data)))
+}
+
+/// The system `tar`. On Windows that is `%SystemRoot%\System32\tar.exe` (bsdtar, which reads `.zip`),
+/// not a GNU tar that Git for Windows or MSYS may put first on `PATH`.
+fn tar() -> std::ffi::OsString {
+    #[cfg(windows)]
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        let tar = Path::new(&root).join("System32").join("tar.exe");
+        if tar.is_file() {
+            return tar.into_os_string();
+        }
+    }
+    "tar".into()
+}
+
+/// Verifies the release archive in `dir` against its `.sha256`, unpacks it, checks that the new binary
 /// reports version `expect`, then atomically replaces `exe`.
 pub fn install_archive(dir: &Path, target: &str, exe: &Path, expect: Version) -> Result<()> {
-    let archive = format!("gg-{target}.tar.gz");
-    let sums = format!("{archive}.sha256");
-    let verified = match run_in(dir, "sha256sum", &["-c", &sums]) {
-        Err(e) if e.kind() == ErrorKind::NotFound => run_in(dir, "shasum", &["-a", "256", "-c", &sums]),
-        r => r,
-    }
-    .context("sha256sum or shasum is required to verify the download")?;
-    if !verified {
+    let archive = archive_name(target);
+    if !checksum_ok(&dir.join(&archive), &dir.join(format!("{archive}.sha256")))? {
         bail!("checksum mismatch for {archive}; nothing was changed");
     }
-    if !run_in(dir, "tar", &["-xzf", &archive]).context("running tar")? {
+    if !run_in(dir, &tar(), &["-xf", &archive]).context("running tar")? {
         bail!("could not unpack {archive}");
     }
-    let new = dir.join(format!("gg-{target}")).join("gg");
+    let new = dir
+        .join(format!("gg-{target}"))
+        .join(format!("gg{}", std::env::consts::EXE_SUFFIX));
     let out = Command::new(&new)
         .arg("--version")
         .output()
@@ -228,13 +259,18 @@ pub fn install_archive(dir: &Path, target: &str, exe: &Path, expect: Version) ->
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))?;
         }
-        fs::rename(&staged, exe)
+        replace_exe(&staged, exe)
     })();
     if let Err(e) = result {
         let _ = fs::remove_file(&staged);
         if e.kind() == ErrorKind::PermissionDenied {
+            let how = if cfg!(windows) {
+                "run it from an elevated terminal"
+            } else {
+                "run `sudo gg self-update`"
+            };
             bail!(
-                "no permission to replace {}; run `sudo gg self-update` or reinstall to a directory you own",
+                "no permission to replace {}; {how} or reinstall to a directory you own",
                 exe.display()
             );
         }
@@ -243,7 +279,43 @@ pub fn install_archive(dir: &Path, target: &str, exe: &Path, expect: Version) ->
     Ok(())
 }
 
+#[cfg(not(windows))]
+fn replace_exe(staged: &Path, exe: &Path) -> std::io::Result<()> {
+    fs::rename(staged, exe)
+}
+
+/// Windows cannot overwrite a running executable but can rename it, so the old binary is moved aside
+/// to `gg.exe.old` (removed by `remove_leftover`) and the new one renamed into place.
+#[cfg(windows)]
+fn replace_exe(staged: &Path, exe: &Path) -> std::io::Result<()> {
+    let old = old_exe_path(exe);
+    let _ = fs::remove_file(&old);
+    fs::rename(exe, &old)?;
+    if let Err(e) = fs::rename(staged, exe) {
+        let _ = fs::rename(&old, exe);
+        return Err(e);
+    }
+    let _ = fs::remove_file(&old);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn old_exe_path(exe: &Path) -> PathBuf {
+    let mut old = exe.as_os_str().to_owned();
+    old.push(".old");
+    old.into()
+}
+
+/// Deletes the binary a previous `self-update` moved aside on Windows (it was still running then).
+fn remove_leftover() {
+    #[cfg(windows)]
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = fs::remove_file(old_exe_path(&exe));
+    }
+}
+
 pub fn self_update(check_only: bool) -> Result<()> {
+    remove_leftover();
     let exe = std::env::current_exe()
         .and_then(|p| p.canonicalize())
         .context("cannot locate the gg binary")?;
@@ -271,7 +343,7 @@ pub fn self_update(check_only: bool) -> Result<()> {
     let target = target().context("no prebuilt binary for this platform; build from source instead")?;
     let dir = TempDir::new()?;
     let base = format!("https://github.com/{REPO}/releases/download/{tag}");
-    let archive = format!("gg-{target}.tar.gz");
+    let archive = archive_name(target);
     println!("{}", ui::dim(format!("Downloading gg {latest} for {target}…")));
     for name in [archive.clone(), format!("{archive}.sha256")] {
         fetch(&format!("{base}/{name}"), Some(&dir.0.join(&name)), 300, false)?;
@@ -322,6 +394,7 @@ fn notices_enabled(config_enabled: bool) -> bool {
 /// Runs after a command: prints a one-line hint when a newer release is known, and refreshes that
 /// knowledge in a detached background process at most once a day. It never blocks or fails the command.
 pub fn notify(config_enabled: bool) {
+    remove_leftover();
     if !notices_enabled(config_enabled) {
         return;
     }
@@ -359,6 +432,14 @@ fn spawn_background_check() {
         use std::os::unix::process::CommandExt;
         // Own process group: Ctrl-C in the terminal does not reach it.
         cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // No console window, and its own process group so Ctrl-C in the terminal does not reach it.
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     }
     let _ = cmd.spawn();
 }
@@ -411,6 +492,35 @@ mod tests {
         assert_eq!(managed_by(Path::new("/opt/release/bin/gg")), None);
         assert_eq!(managed_by(Path::new("/home/a/.local/bin/gg")), None);
         assert_eq!(managed_by(Path::new("/usr/local/bin/gg")), None);
+        assert!(managed_by(Path::new(r"C:\Users\a\.cargo\bin\gg.exe")).is_some());
+        assert_eq!(
+            managed_by(Path::new(r"C:\Users\a\AppData\Local\Programs\gg\gg.exe")),
+            None
+        );
+    }
+
+    #[test]
+    fn archives_and_checksums() {
+        assert_eq!(archive_name("x86_64-pc-windows-msvc"), "gg-x86_64-pc-windows-msvc.zip");
+        assert_eq!(archive_name("aarch64-apple-darwin"), "gg-aarch64-apple-darwin.tar.gz");
+        if let Some(t) = target() {
+            assert_eq!(archive_name(t).ends_with(".zip"), cfg!(windows));
+        }
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let (file, sums) = (dir.path().join("a.zip"), dir.path().join("a.zip.sha256"));
+        fs::write(&file, b"abc").unwrap();
+        fs::write(
+            &sums,
+            "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD *a.zip\r\n",
+        )
+        .unwrap();
+        assert!(checksum_ok(&file, &sums).unwrap());
+        fs::write(&file, b"abd").unwrap();
+        assert!(!checksum_ok(&file, &sums).unwrap());
     }
 
     #[test]
@@ -439,15 +549,10 @@ mod tests {
             fs::write(&bin, format!("#!/bin/sh\necho 'gg {version}'\n")).unwrap();
             fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
             let archive = format!("gg-{target}.tar.gz");
-            assert!(run_in(&dl, "tar", &["-czf", &archive, &format!("gg-{target}")]).unwrap());
+            assert!(run_in(&dl, "tar".as_ref(), &["-czf", &archive, &format!("gg-{target}")]).unwrap());
             fs::remove_dir_all(&pkg).unwrap();
-            let sums = Command::new("sh")
-                .arg("-c")
-                .arg(format!("sha256sum {archive} 2>/dev/null || shasum -a 256 {archive}"))
-                .current_dir(&dl)
-                .output()
-                .unwrap();
-            fs::write(dl.join(format!("{archive}.sha256")), sums.stdout).unwrap();
+            let sum = sha256_hex(&fs::read(dl.join(&archive)).unwrap());
+            fs::write(dl.join(format!("{archive}.sha256")), format!("{sum}  {archive}\n")).unwrap();
             dl
         };
         let bin_dir = tmp.path().join("bin");

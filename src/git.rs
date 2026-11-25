@@ -53,7 +53,10 @@ pub fn parse_remote(url: &str) -> Option<RemoteUrl> {
         });
     }
     let (left, path) = url.split_once(':')?;
-    if left.contains('/') || left.is_empty() {
+    // As in Git, a separator before the colon means a local path, and so does a drive letter on Windows.
+    let is_sep = |c: char| c == '/' || (cfg!(windows) && c == '\\');
+    let drive = cfg!(windows) && left.len() == 1 && left.as_bytes()[0].is_ascii_alphabetic();
+    if left.is_empty() || left.contains(is_sep) || drive {
         return None;
     }
     Some(RemoteUrl {
@@ -223,6 +226,8 @@ mod tests {
             assert_eq!(parse_remote(u), want, "{u}");
         }
         assert_eq!(parse_remote("/tmp/local/repo"), None);
+        assert_eq!(parse_remote(r"C:\src\repo").is_none(), cfg!(windows));
+        assert_eq!(parse_remote(r"..\x:y").is_none(), cfg!(windows));
         assert_eq!(parse_remote("./a:b/c"), None);
         assert_eq!(parse_remote("file:///tmp/x"), None);
         // Only a real scheme before "://" makes a URL (found by fuzzing).
