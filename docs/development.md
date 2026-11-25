@@ -2,6 +2,7 @@
 
 - [Setup](#setup)
 - [Tests](#tests)
+- [Fuzzing](#fuzzing)
 - [Continuous integration](#continuous-integration)
 - [Security scanning](#security-scanning)
 - [Releasing](#releasing)
@@ -53,6 +54,25 @@ Code style: `rustfmt` defaults with `max_width = 120` (`rustfmt.toml`), clippy c
 
 The dashboard and prompts need a terminal and are tested by hand. To check terminal restoration, start `gg`, choose **Generate key**, press `Ctrl-C` at the passphrase prompt, quit, and confirm that typing is still echoed.
 
+## Fuzzing
+
+`fuzz/` is a [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) (libFuzzer) crate. It calls the library in `src/lib.rs` and needs a nightly toolchain:
+
+| Target | Checks |
+|---|---|
+| `remote_url` | `parse_remote`/`rewrite_url` never panic; a rewritten URL parses to the profile alias with the same path, and rewriting it again gives the same URL |
+| `ssh_config` | `parse_hosts`/`plan_sync` never panic; after a sync every alias exists, a second sync changes nothing, and none of your lines are lost |
+| `clone_args` | `parse_clone_args` never panics and returns 1–2 positional arguments with valid indexes |
+
+```bash
+cargo install --locked cargo-fuzz
+cd fuzz
+cargo +nightly fuzz run -O ssh_config -- -max_total_time=120
+cargo +nightly fuzz run -O ssh_config artifacts/ssh_config/crash-…   # replay a crash
+```
+
+Turn each crash into a unit test next to the fixed code.
+
 ## Continuous integration
 
 All workflows are in `.github/workflows/`.
@@ -61,6 +81,7 @@ All workflows are in `.github/workflows/`.
 |---|---|---|
 | `ci.yml` | Push to `main`, pull requests | **Lint** (rustfmt, clippy `-D warnings`) · **Test** on Linux x86_64/arm64 and macOS arm64/x86_64 (`cargo test --locked`, `--version` and completion smoke tests) · **MSRV** (`cargo check` on 1.88) · **Installer** (shellcheck) |
 | `security.yml` | Push, pull requests, Mondays, manual | cargo-deny, OSV-Scanner, gitleaks, zizmor, dependency review |
+| `fuzz.yml` | Push to `main`, pull requests, Mondays, manual | Each fuzz target for 60 s (10 min on the weekly run); crash inputs are uploaded as artifacts |
 | `codeql.yml` | Push, pull requests, Wednesdays | CodeQL for Rust and GitHub Actions |
 | `scorecard.yml` | Push to `main`, Tuesdays, branch-protection changes | OpenSSF Scorecard |
 | `release.yml` | `v*` tags | Builds and publishes releases (see [Releasing](#releasing)) |
@@ -92,7 +113,7 @@ These are the tools widely used by open-source Rust projects. Results that suppo
 
 The weekly scheduled runs catch advisories published after the code last changed.
 
-Dependabot does not update the gitleaks CLI. To update it, change `GITLEAKS_VERSION` and `GITLEAKS_SHA256` in `security.yml`, using the value from the release's `gitleaks_<version>_checksums.txt`.
+Dependabot does not update the gitleaks CLI or cargo-fuzz (`CARGO_FUZZ_VERSION` in `fuzz.yml`). To update it, change `GITLEAKS_VERSION` and `GITLEAKS_SHA256` in `security.yml`, using the value from the release's `gitleaks_<version>_checksums.txt`.
 
 ### Handling findings
 
@@ -125,7 +146,7 @@ Releases are built entirely by GitHub Actions from a tag.
       | `x86_64-apple-darwin` | `macos-15-intel` | Intel Macs |
       | `aarch64-apple-darwin` | `macos-15` | Apple silicon |
 
-      Each job runs the test suite for its target, builds with `--release --locked` (LTO, stripped), and packages `gg-<target>.tar.gz` (binary, LICENSE, README, completions) with a `.sha256`. It also creates a signed **build provenance attestation** (Sigstore, SLSA) for the archive.
+      Each job runs the test suite for its target, builds with `--release --locked` (LTO, stripped), and packages `gg-<target>.tar.gz` (binary, LICENSE, README, completions) with a `.sha256`. It also creates a signed **build provenance attestation** (Sigstore, SLSA) for the archive and publishes its bundle as `gg-<target>.tar.gz.sigstore.json`.
    3. **Publish**: collects the archives, writes `SHA256SUMS`, and creates the GitHub release with generated notes. Tags with a hyphen (`v0.2.0-rc.1`) are marked as pre-releases.
 
 Asset names contain no version, so `releases/latest/download/gg-<target>.tar.gz` always points at the newest release; `install.sh` relies on this.
@@ -145,6 +166,6 @@ Not built yet. Adding it requires replacing the Unix-only parts (termios via `li
 Recommended once the repository is public:
 
 - **Settings → Code security**: enable Dependabot alerts and security updates, secret scanning with push protection, and **private vulnerability reporting** (used by `SECURITY.md`).
-- **Settings → Branches**: protect `main`. Require pull requests and the `CI` and `Security` checks, and block force pushes.
+- **Settings → Rules → Rulesets**: protect `main` with a ruleset rather than classic branch protection, because Scorecard can read rulesets without an admin token. Block force pushes and deletion, require a pull request with one approval, and require the `CI`, `Security`, `CodeQL` and `Fuzz` checks (up to date with `main`).
 - **Settings → Actions → General**: set workflow permissions to *Read repository contents*, and require approval for workflows from first-time contributors.
 - **Settings → Tags** (rulesets): restrict who can create `v*` tags, since a tag triggers a release.

@@ -28,10 +28,19 @@ fn strip_user(s: &str) -> &str {
     s.rsplit_once('@').map_or(s, |(_, h)| h)
 }
 
+/// Like Git, only `[A-Za-z0-9+.-]` before `://` makes a URL; anything else is scp-like (`host:path`).
+fn is_scheme(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
 /// Parses https://, ssh:// and scp-like (`git@host:owner/repo`) remote URLs.
 pub fn parse_remote(url: &str) -> Option<RemoteUrl> {
     let url = url.trim();
-    if let Some((scheme, rest)) = url.split_once("://") {
+    if let Some((scheme, rest)) = url.split_once("://")
+        && is_scheme(scheme)
+    {
         if !matches!(scheme, "https" | "http" | "ssh" | "git" | "git+ssh") {
             return None;
         }
@@ -216,6 +225,9 @@ mod tests {
         assert_eq!(parse_remote("/tmp/local/repo"), None);
         assert_eq!(parse_remote("./a:b/c"), None);
         assert_eq!(parse_remote("file:///tmp/x"), None);
+        // Only a real scheme before "://" makes a URL (found by fuzzing).
+        let odd = parse_remote("git@github-work:a b://c").unwrap();
+        assert_eq!((odd.host.as_str(), odd.path.as_str()), ("github-work", "a b://c.git"));
     }
 
     #[test]

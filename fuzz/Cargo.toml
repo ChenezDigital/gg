@@ -1,0 +1,34 @@
+[package]
+name = "gg-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+gg = { path = ".." }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "remote_url"
+path = "fuzz_targets/remote_url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ssh_config"
+path = "fuzz_targets/ssh_config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "clone_args"
+path = "fuzz_targets/clone_args.rs"
+test = false
+doc = false
+bench = false

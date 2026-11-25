@@ -40,13 +40,28 @@ fn split_kv(line: &str) -> Option<(String, String)> {
     Some((key, value.trim_matches('"').to_string()))
 }
 
+/// Lines without the `\n`, keeping any `\r` so files with CRLF endings are written back unchanged.
+fn raw_lines(content: &str) -> Vec<&str> {
+    let mut lines: Vec<&str> = content.split('\n').collect();
+    if lines.last() == Some(&"") {
+        lines.pop();
+    }
+    lines
+}
+
 fn strip_block(content: &str) -> String {
+    let lines = raw_lines(content);
     let mut out = Vec::new();
     let mut inside = false;
     let mut skip_blank = false;
-    for line in content.lines() {
+    let last_end = lines.iter().rposition(|l| l.trim() == END);
+    for (i, line) in lines.iter().copied().enumerate() {
+        // Only a complete block is removed; a stray marker line goes, but the lines after it stay.
         if line.trim() == BEGIN {
-            inside = true;
+            inside = last_end.is_some_and(|e| e > i);
+            continue;
+        }
+        if !inside && line.trim() == END {
             continue;
         }
         if inside {
@@ -175,7 +190,7 @@ pub fn plan_sync(content: &str, cfg: &Config) -> SyncPlan {
         base
     } else {
         let block = format!("{BEGIN}\n{block}{END}\n");
-        let lines: Vec<&str> = base.lines().collect();
+        let lines = raw_lines(&base);
         let first_section = lines
             .iter()
             .position(|l| split_kv(l).is_some_and(|(k, _)| k == "host" || k == "match"));
@@ -189,7 +204,7 @@ pub fn plan_sync(content: &str, cfg: &Config) -> SyncPlan {
                 s
             }
             None if base.trim().is_empty() => block,
-            None => format!("{}\n\n{block}", base.trim_end()),
+            None => format!("{}\n\n{block}", base.trim_end_matches('\n')),
         }
     };
     SyncPlan {
@@ -426,6 +441,21 @@ mod tests {
         let mut fewer = cfg();
         fewer.profiles.remove("work");
         assert_eq!(plan_sync(&plan.content, &fewer).content, content);
+    }
+
+    #[test]
+    fn sync_keeps_crlf_and_unterminated_markers() {
+        let c = cfg();
+        let crlf = "ServerAliveInterval 60\r\n\r\nHost other\r\n    HostName example.com\r\n";
+        let plan = plan_sync(crlf, &c);
+        assert!(plan.content.contains("ServerAliveInterval 60\r\n"));
+        assert!(plan.content.ends_with("HostName example.com\r\n"));
+        assert_eq!(plan_sync(&plan.content, &c).content, plan.content);
+
+        let broken = format!("{BEGIN}\nHost mine\n    HostName example.com\n");
+        let plan = plan_sync(&broken, &c);
+        assert!(plan.content.contains("Host mine\n    HostName example.com\n"));
+        assert_eq!(plan_sync(&plan.content, &c).content, plan.content);
     }
 
     #[test]

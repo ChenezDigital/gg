@@ -7,14 +7,17 @@
 ```
 src/
 ├── main.rs         CLI definition (clap derive), dispatch, exit codes
+├── lib.rs          Exposes the modules below to main.rs and the fuzz targets (not a stable API)
 ├── config.rs       Profile/Config types, config.toml location, load/save, validation
 ├── git.rs          Remote URL parsing and rewriting, git process helpers
 ├── ssh.rs          ~/.ssh/config parsing, managed block, keygen, connection test
 ├── commands.rs     Command implementations (whoami, use, clone, remote, profile, passthrough)
 ├── interactive.rs  Prompts (dialoguer), setup wizard, dashboard actions, terminal state
 ├── tui.rs          Dashboard (ratatui + crossterm)
-└── ui.rs           Shared colors and message formatting (console)
+├── ui.rs           Shared colors and message formatting (console)
+└── update.rs       self-update and the daily new-release notice
 tests/cli.rs        End-to-end tests of the binary in an isolated HOME
+fuzz/               cargo-fuzz targets: remote_url, ssh_config, clone_args
 ```
 
 Dependencies, and why each is used:
@@ -54,7 +57,7 @@ Errors print as `gg: <message with context>` and exit 1. Child processes inherit
 | https/http | `https://user@github.com/owner/repo` |
 | git | `git://github.com/owner/repo.git` |
 
-Local paths (`/x`, `./x`, `file://…`) and other schemes return `None` and are never modified. The path is normalized: surrounding `/` are trimmed and `.git` is appended if missing.
+Input is treated as a URL only if the text before `://` is a valid scheme (letters, digits, `+`, `.`, `-`); anything else, such as `host:a b://c`, is parsed as scp-like. Local paths (`/x`, `./x`, `file://…`) and other schemes return `None` and are never modified. The path is normalized: surrounding `/` are trimmed and `.git` is appended if missing.
 
 `git::rewrite_url(url, profile, cfg)` returns `git@<profile.ssh_alias>:<path>` only when the host is:
 
@@ -94,9 +97,27 @@ Any other host returns `None`. So a GitLab remote is never repointed at a GitHub
 2. Parse your remaining hosts. Each profile alias that is already defined is reported (with a warning if `HostName` or `IdentityFile` differ); the rest are rendered with `render_host`.
 3. If anything was rendered, insert the block between the markers just before the first `Host`/`Match` line, so global options at the top keep applying.
 
+Lines are kept byte for byte, including `\r` in CRLF files. `strip_block` removes a block only when a begin marker has an end marker after it; a stray marker line is dropped, but the lines after it are kept.
+
 `sync` writes a backup and then the new content. A newly created file gets mode 600, and `~/.ssh` is created with mode 700. It is idempotent: running it again produces identical bytes.
 
 `ssh::test` runs `ssh -T -o ConnectTimeout=10 git@<alias>` and searches the output for GitHub's `Hi <login>!` greeting.
+
+## Updates
+
+`update.rs` uses the system `curl`/`wget`, `sha256sum`/`shasum` and `tar`, as `install.sh` does, so it adds no HTTP, TLS or crypto crates.
+
+- **`latest`** reads `tag_name` from `api.github.com/repos/ChenezDigital/gg/releases/latest`. That endpoint never returns pre-releases.
+- **`self_update`** works in this order:
+  1. Refuses binaries owned by cargo, Homebrew or Nix, and development builds in `target/` (`managed_by`), and prints their update command.
+  2. Picks the asset from the compile-time OS and architecture.
+  3. Downloads the archive and its `.sha256` into a temporary directory.
+  4. `install_archive` verifies the checksum, unpacks, and requires `<new> --version` to print `gg <expected>`.
+  5. Copies the new binary to a staging file next to the old one, sets mode `755`, and `rename`s it over the old one. That keeps the swap atomic, and it works while the old binary is running.
+- **`notify`** runs in `main` after a command succeeds:
+  1. If the cached latest version (`latest-version` in the user cache directory) is newer, it prints a hint to stderr.
+  2. If the cache is older than 24 hours, it records the attempt and spawns `gg __update-check` (hidden) with null stdio in its own process group. That process refreshes the cache, so the command never waits for the network, and Ctrl-C doesn't reach it.
+  3. It does nothing unless stderr is a terminal, or when `CI` or `GG_NO_UPDATE_CHECK` is set, or when `update_check = false`.
 
 ## Dashboard and the terminal
 

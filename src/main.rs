@@ -1,18 +1,11 @@
-mod commands;
-mod config;
-mod git;
-mod interactive;
-mod ssh;
-mod tui;
-mod ui;
-
 use std::process::ExitCode;
 
 use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser, Subcommand};
 
-use commands::ProfileFields;
-use config::Config;
+use gg::commands::{self, ProfileFields};
+use gg::config::Config;
+use gg::{git, interactive, ssh, update};
 
 #[derive(Parser)]
 #[command(
@@ -74,6 +67,14 @@ enum Cmd {
     Setup,
     /// Print shell completions, e.g. `gg completions bash > ~/.local/share/bash-completion/completions/gg`
     Completions { shell: clap_complete::Shell },
+    /// Update gg to the latest release (verifies the SHA-256 checksum before replacing the binary)
+    SelfUpdate {
+        /// Only report whether a newer release exists
+        #[arg(long)]
+        check: bool,
+    },
+    #[command(name = update::BACKGROUND_CHECK_ARG, hide = true)]
+    UpdateCheck,
     /// Run git directly with the given arguments
     Git {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -165,8 +166,7 @@ fn pick(cfg: &Config, given: Option<String>, prompt: &str) -> Result<Option<Stri
     interactive::pick_profile(cfg, prompt, current.as_deref())
 }
 
-fn run() -> Result<i32> {
-    let cli = Cli::parse();
+fn run(cli: Cli) -> Result<i32> {
     let Some(cmd) = cli.command else {
         if interactive::is_tty() {
             return interactive::menu();
@@ -241,6 +241,8 @@ fn run() -> Result<i32> {
         Cmd::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "gg", &mut std::io::stdout());
         }
+        Cmd::SelfUpdate { check } => update::self_update(check)?,
+        Cmd::UpdateCheck => update::background_check(),
         Cmd::Git { args } => return git::passthrough(&args),
         Cmd::External(args) => return commands::git_passthrough(&cfg, &args),
     }
@@ -248,8 +250,18 @@ fn run() -> Result<i32> {
 }
 
 fn main() -> ExitCode {
-    match run() {
-        Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
+    let cli = Cli::parse();
+    let notice = !matches!(
+        cli.command,
+        Some(Cmd::SelfUpdate { .. } | Cmd::UpdateCheck | Cmd::Completions { .. })
+    );
+    match run(cli) {
+        Ok(code) => {
+            if notice {
+                update::notify(Config::load().map_or(true, |c| c.update_check != Some(false)));
+            }
+            ExitCode::from(code.clamp(0, 255) as u8)
+        }
         Err(e) => {
             eprintln!("gg: {e:#}");
             ExitCode::from(1)

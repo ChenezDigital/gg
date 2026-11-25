@@ -390,14 +390,16 @@ const CLONE_VALUE_OPTS: &[&str] = &[
     "--ref-format",
 ];
 
-struct CloneArgs {
-    profile: Option<String>,
-    args: Vec<String>,
-    positionals: Vec<usize>,
-    bare: bool,
+/// `gg clone` arguments: the extracted profile, the remaining git arguments and the indexes of
+/// the positional ones (repository, optional directory).
+pub struct CloneArgs {
+    pub profile: Option<String>,
+    pub args: Vec<String>,
+    pub positionals: Vec<usize>,
+    pub bare: bool,
 }
 
-fn parse_clone_args(input: &[String], mut profile: Option<String>) -> Result<CloneArgs> {
+pub fn parse_clone_args(input: &[String], mut profile: Option<String>) -> Result<CloneArgs> {
     let mut args = Vec::new();
     let mut positionals = Vec::new();
     let mut bare = false;
