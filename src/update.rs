@@ -81,11 +81,20 @@ pub fn managed_by(exe: &Path) -> Option<String> {
         Some("brew upgrade gg".into())
     } else if s.contains("/nix/store/") {
         Some("your Nix configuration".into())
-    } else if s.contains("/target/debug/") || s.contains("/target/release/") {
+    } else if is_cargo_build_dir(exe) {
         Some("git pull && cargo build (development build)".into())
     } else {
         None
     }
+}
+
+/// `…/target/{debug,release}/gg` or `…/target/<triple>/{debug,release}/gg`.
+fn is_cargo_build_dir(exe: &Path) -> bool {
+    let mut dirs = exe.ancestors().skip(1).filter_map(|p| p.file_name()?.to_str());
+    if !matches!(dirs.next(), Some("debug" | "release")) {
+        return false;
+    }
+    dirs.take(2).any(|d| d == "target")
 }
 
 fn update_command() -> String {
@@ -398,6 +407,8 @@ mod tests {
         );
         assert!(managed_by(Path::new("/home/linuxbrew/.linuxbrew/Cellar/gg/0.1.0/bin/gg")).is_some());
         assert!(managed_by(Path::new("/src/gg/target/release/gg")).is_some());
+        assert!(managed_by(Path::new("/src/gg/target/x86_64-unknown-linux-musl/debug/gg")).is_some());
+        assert_eq!(managed_by(Path::new("/opt/release/bin/gg")), None);
         assert_eq!(managed_by(Path::new("/home/a/.local/bin/gg")), None);
         assert_eq!(managed_by(Path::new("/usr/local/bin/gg")), None);
     }
