@@ -93,12 +93,15 @@ gg-<target>/
 Every release has:
 
 - **Per-archive checksums** (`*.tar.gz.sha256`) and a combined `SHA256SUMS`.
-- **Build-provenance attestations**, signed through Sigstore by GitHub Actions. They prove the archive was built by this repository's `release.yml` workflow from the tagged commit.
+- **Build-provenance attestations**, signed through Sigstore by GitHub Actions. They prove the archive was built by this repository's `release.yml` workflow from the tagged commit. Each one is also published as `gg-<target>.tar.gz.sigstore.json`.
 
 Verify provenance with the [GitHub CLI](https://cli.github.com/):
 
 ```bash
 gh attestation verify gg-aarch64-apple-darwin.tar.gz --repo ChenezDigital/gg
+# or offline, with the published bundle:
+gh attestation verify gg-aarch64-apple-darwin.tar.gz --repo ChenezDigital/gg \
+  --bundle gg-aarch64-apple-darwin.tar.gz.sigstore.json
 ```
 
 ## From source

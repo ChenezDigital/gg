@@ -7,6 +7,7 @@
 ```
 src/
 ├── main.rs         CLI definition (clap derive), dispatch, exit codes
+├── lib.rs          Exposes the modules below to main.rs and the fuzz targets (not a stable API)
 ├── config.rs       Profile/Config types, config.toml location, load/save, validation
 ├── git.rs          Remote URL parsing and rewriting, git process helpers
 ├── ssh.rs          ~/.ssh/config parsing, managed block, keygen, connection test
@@ -15,6 +16,7 @@ src/
 ├── tui.rs          Dashboard (ratatui + crossterm)
 └── ui.rs           Shared colors and message formatting (console)
 tests/cli.rs        End-to-end tests of the binary in an isolated HOME
+fuzz/               cargo-fuzz targets: remote_url, ssh_config, clone_args
 ```
 
 Dependencies, and why each is used:
@@ -54,7 +56,7 @@ Errors print as `gg: <message with context>` and exit 1. Child processes inherit
 | https/http | `https://user@github.com/owner/repo` |
 | git | `git://github.com/owner/repo.git` |
 
-Local paths (`/x`, `./x`, `file://…`) and other schemes return `None` and are never modified. The path is normalized: surrounding `/` are trimmed and `.git` is appended if missing.
+Input is treated as a URL only if the text before `://` is a valid scheme (letters, digits, `+`, `.`, `-`); anything else, such as `host:a b://c`, is parsed as scp-like. Local paths (`/x`, `./x`, `file://…`) and other schemes return `None` and are never modified. The path is normalized: surrounding `/` are trimmed and `.git` is appended if missing.
 
 `git::rewrite_url(url, profile, cfg)` returns `git@<profile.ssh_alias>:<path>` only when the host is:
 
@@ -93,6 +95,8 @@ Any other host returns `None`. So a GitLab remote is never repointed at a GitHub
 1. Remove any existing managed block (`strip_block`).
 2. Parse your remaining hosts. Each profile alias that is already defined is reported (with a warning if `HostName` or `IdentityFile` differ); the rest are rendered with `render_host`.
 3. If anything was rendered, insert the block between the markers just before the first `Host`/`Match` line, so global options at the top keep applying.
+
+Lines are kept byte for byte, including `\r` in CRLF files. `strip_block` removes a block only when a begin marker has an end marker after it; a stray marker line is dropped, but the lines after it are kept.
 
 `sync` writes a backup and then the new content. A newly created file gets mode 600, and `~/.ssh` is created with mode 700. It is idempotent: running it again produces identical bytes.
 

@@ -1,18 +1,11 @@
-mod commands;
-mod config;
-mod git;
-mod interactive;
-mod ssh;
-mod tui;
-mod ui;
-
 use std::process::ExitCode;
 
 use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser, Subcommand};
 
-use commands::ProfileFields;
-use config::Config;
+use gg::commands::{self, ProfileFields};
+use gg::config::Config;
+use gg::{git, interactive, ssh};
 
 #[derive(Parser)]
 #[command(
