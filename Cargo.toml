@@ -1,0 +1,33 @@
+[package]
+name = "gg"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Switch between Git accounts (commit identity + SSH key) and run git with the right one"
+license = "MIT"
+repository = "https://github.com/ChenezDigital/gg"
+readme = "README.md"
+keywords = ["git", "ssh", "github", "cli", "accounts"]
+categories = ["command-line-utilities", "development-tools"]
+publish = false
+
+[dependencies]
+anyhow = "1.0.105"
+clap = { version = "4.6.10", features = ["derive"] }
+clap_complete = "4.6.12"
+console = "0.16.6"
+ctrlc = "3.5.3"
+dialoguer = "0.12.0"
+dirs = "7.0.0"
+libc = "0.2.191"
+ratatui = "0.30.2"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.2.3"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
