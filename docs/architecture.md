@@ -30,7 +30,8 @@ Dependencies, and why each is used:
 | `dirs` | Home directory |
 | `dialoguer`, `console` | Prompts and colored output |
 | `ratatui`, `crossterm` | Dashboard |
-| `ctrlc`, `libc` | SIGINT handling and termios save/restore |
+| `ctrlc`, `libc` (Unix), `crossterm_winapi` (Windows) | Ctrl-C handling and terminal mode save/restore |
+| `sha2` | Verifies `self-update` downloads |
 
 `cargo deny` checks every dependency for advisories, license and source on each push (see [development](development.md#security-scanning)).
 
@@ -105,18 +106,18 @@ Lines are kept byte for byte, including `\r` in CRLF files. `strip_block` remove
 
 ## Updates
 
-`update.rs` uses the system `curl`/`wget`, `sha256sum`/`shasum` and `tar`, as `install.sh` does, so it adds no HTTP, TLS or crypto crates.
+`update.rs` uses the system `curl`/`wget` and `tar`, as `install.sh` does, so it adds no HTTP or TLS crates; Windows 10+ ships `curl.exe` and a bsdtar `tar.exe` that also reads `.zip` (`update::tar` calls it by full path so an MSYS GNU tar on `PATH` is not used). SHA-256 is computed in-process with `sha2`.
 
 - **`latest`** reads `tag_name` from `api.github.com/repos/ChenezDigital/gg/releases/latest`. That endpoint never returns pre-releases.
 - **`self_update`** works in this order:
   1. Refuses binaries owned by cargo, Homebrew or Nix, and development builds in `target/` (`managed_by`), and prints their update command.
-  2. Picks the asset from the compile-time OS and architecture.
+  2. Picks the asset from the compile-time OS and architecture (`.zip` on Windows, `.tar.gz` elsewhere).
   3. Downloads the archive and its `.sha256` into a temporary directory.
   4. `install_archive` verifies the checksum, unpacks, and requires `<new> --version` to print `gg <expected>`.
-  5. Copies the new binary to a staging file next to the old one, sets mode `755`, and `rename`s it over the old one. That keeps the swap atomic, and it works while the old binary is running.
+  5. Copies the new binary to a staging file next to the old one, sets mode `755`, and `rename`s it over the old one. That keeps the swap atomic, and it works while the old binary is running. Windows cannot replace a running `.exe` but can rename it, so there the old one is first renamed to `gg.exe.old` (put back if the second rename fails) and deleted by `remove_leftover` on a later run.
 - **`notify`** runs in `main` after a command succeeds:
   1. If the cached latest version (`latest-version` in the user cache directory) is newer, it prints a hint to stderr.
-  2. If the cache is older than 24 hours, it records the attempt and spawns `gg __update-check` (hidden) with null stdio in its own process group. That process refreshes the cache, so the command never waits for the network, and Ctrl-C doesn't reach it.
+  2. If the cache is older than 24 hours, it records the attempt and spawns `gg __update-check` (hidden) with null stdio in its own process group (on Windows: `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`). That process refreshes the cache, so the command never waits for the network, and Ctrl-C doesn't reach it.
   3. It does nothing unless stderr is a terminal, or when `CI` or `GG_NO_UPDATE_CHECK` is set, or when `update_check = false`.
 
 ## Dashboard and the terminal
@@ -144,6 +145,7 @@ Prompts read in raw mode, but the kernel still sends SIGINT to the whole foregro
 - A `ctrlc` handler is installed once. In plain CLI mode it restores the termios captured at start-up, shows the cursor, and exits 130.
 - While the dashboard runs (`DASHBOARD` flag), the handler does nothing. The prompt returns an `Interrupted` error, or the child exits from the signal; `ssh::keygen` maps that to `Interrupted`. `run_action` turns it into "cancelled" and the dashboard continues.
 - `tui::run` saves the termios before entering and restores it on every exit path, including errors.
+- On Windows, `interactive::TtyState` is the console input mode (`GetConsoleMode`/`SetConsoleMode` via `crossterm_winapi`) instead of termios, Ctrl-C arrives as a console control event (`ctrlc` uses `SetConsoleCtrlHandler`), and a child killed by Ctrl-C exits with `STATUS_CONTROL_C_EXIT`, which `ssh::keygen` maps to `Interrupted`. crossterm reports key releases on Windows, so the dashboard only acts on `KeyEventKind::Press`.
 
 ## Design decisions
 

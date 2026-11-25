@@ -18,7 +18,7 @@ pub struct SshHost {
 }
 
 pub fn ssh_dir() -> Result<PathBuf> {
-    Ok(dirs::home_dir()
+    Ok(crate::config::home_dir()
         .context("cannot determine home directory")?
         .join(".ssh"))
 }
@@ -224,6 +224,17 @@ fn set_mode(_: &Path, _: u32) -> Result<()> {
     Ok(())
 }
 
+/// Whether a child exited because the user pressed Ctrl-C.
+#[cfg(unix)]
+fn interrupted(status: &std::process::ExitStatus) -> bool {
+    std::os::unix::process::ExitStatusExt::signal(status) == Some(libc::SIGINT)
+}
+#[cfg(windows)]
+fn interrupted(status: &std::process::ExitStatus) -> bool {
+    const STATUS_CONTROL_C_EXIT: u32 = 0xC000_013A;
+    status.code().is_some_and(|c| c as u32 == STATUS_CONTROL_C_EXIT)
+}
+
 pub fn ensure_ssh_dir() -> Result<PathBuf> {
     let dir = ssh_dir()?;
     if !dir.exists() {
@@ -311,7 +322,7 @@ pub fn keygen(profile: &Profile, no_passphrase: bool) -> Result<()> {
         cmd.args(["-N", ""]);
     }
     let status = cmd.status().context("failed to run ssh-keygen")?;
-    if std::os::unix::process::ExitStatusExt::signal(&status) == Some(libc::SIGINT) {
+    if interrupted(&status) {
         return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "ssh-keygen interrupted").into());
     }
     if !status.success() {

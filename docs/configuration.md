@@ -16,7 +16,9 @@ It never writes `~/.gitconfig` or any other global Git setting.
 
 1. `$GG_CONFIG`, if set (any path)
 2. `$XDG_CONFIG_HOME/gg/config.toml`, if `XDG_CONFIG_HOME` is an absolute path
-3. `~/.config/gg/config.toml` (Linux **and** macOS)
+3. `~/.config/gg/config.toml` (Linux **and** macOS; on Windows `%USERPROFILE%\.config\gg\config.toml`)
+
+On Windows, `~` in paths such as `ssh_key` means `%USERPROFILE%`, the same directory OpenSSH and Git for Windows use for `~/.ssh`.
 
 The file is created on first save, with its parent directory.
 

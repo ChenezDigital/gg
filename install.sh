@@ -1,5 +1,5 @@
 #!/bin/sh
-# gg installer for Linux and macOS (x86_64 / aarch64).
+# gg installer for Linux and macOS (x86_64 / aarch64). For Windows see install.ps1.
 #
 #   curl -fsSL https://raw.githubusercontent.com/ChenezDigital/gg/main/install.sh | sh
 #
@@ -35,7 +35,9 @@ detect_target() {
             fi
             echo "$arch-apple-darwin"
             ;;
-        *) die "unsupported OS: $os (Linux and macOS are supported; on Windows build from source for now)" ;;
+        MINGW* | MSYS* | CYGWIN*)
+            die "on Windows run this in PowerShell instead: irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex" ;;
+        *) die "unsupported OS: $os (supported: Linux, macOS; Windows via install.ps1)" ;;
     esac
 }
 

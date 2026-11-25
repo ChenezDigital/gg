@@ -21,8 +21,15 @@ fn require_tty(what: &str) -> Result<()> {
     Ok(())
 }
 
-/// Snapshot of the terminal settings (echo, line mode, ...), if stdin is a terminal.
-pub fn save_tty() -> Option<libc::termios> {
+/// Terminal settings (echo, line mode, ...) that child programs or a Ctrl-C may leave changed.
+#[cfg(unix)]
+pub type TtyState = libc::termios;
+#[cfg(windows)]
+pub type TtyState = u32;
+
+/// Snapshot of the terminal settings, if stdin is a terminal.
+#[cfg(unix)]
+pub fn save_tty() -> Option<TtyState> {
     // SAFETY: tcgetattr only writes into the zeroed struct we own.
     unsafe {
         let mut t: libc::termios = std::mem::zeroed();
@@ -30,10 +37,28 @@ pub fn save_tty() -> Option<libc::termios> {
     }
 }
 
-pub fn restore_tty(saved: Option<libc::termios>) {
+#[cfg(unix)]
+pub fn restore_tty(saved: Option<TtyState>) {
     if let Some(t) = saved {
         // SAFETY: applies attributes previously read from the same descriptor.
         unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &t) };
+    }
+}
+
+/// Console input mode of `CONIN$`, if there is a console.
+#[cfg(windows)]
+pub fn save_tty() -> Option<TtyState> {
+    use crossterm_winapi::{ConsoleMode, Handle};
+    Handle::current_in_handle()
+        .and_then(|h| ConsoleMode::from(h).mode())
+        .ok()
+}
+
+#[cfg(windows)]
+pub fn restore_tty(saved: Option<TtyState>) {
+    use crossterm_winapi::{ConsoleMode, Handle};
+    if let (Some(mode), Ok(h)) = (saved, Handle::current_in_handle()) {
+        let _ = ConsoleMode::from(h).set_mode(mode);
     }
 }
 
@@ -51,7 +76,8 @@ fn install_interrupt_handler() {
                 return;
             }
             restore_tty(saved);
-            eprintln!("\x1b[?25h");
+            let _ = ratatui::crossterm::execute!(std::io::stderr(), ratatui::crossterm::cursor::Show);
+            eprintln!();
             std::process::exit(130);
         });
     });

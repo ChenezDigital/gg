@@ -364,7 +364,7 @@ pub fn run() -> Result<()> {
     result
 }
 
-fn event_loop(terminal: &mut DefaultTerminal, app: &mut App, original: Option<libc::termios>) -> Result<()> {
+fn event_loop(terminal: &mut DefaultTerminal, app: &mut App, original: Option<interactive::TtyState>) -> Result<()> {
     loop {
         terminal.draw(|f| draw(f, app))?;
         let Event::Key(key) = event::read()? else { continue };
@@ -424,7 +424,7 @@ fn run_suspended(
     app: &mut App,
     action: Action,
     label: &str,
-    original: Option<libc::termios>,
+    original: Option<interactive::TtyState>,
 ) -> Result<()> {
     terminal::disable_raw_mode()?;
     interactive::restore_tty(original);
