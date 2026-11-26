@@ -145,7 +145,7 @@ Prompts read in raw mode, but the kernel still sends SIGINT to the whole foregro
 - A `ctrlc` handler is installed once. In plain CLI mode it restores the termios captured at start-up, shows the cursor, and exits 130.
 - While the dashboard runs (`DASHBOARD` flag), the handler does nothing. The prompt returns an `Interrupted` error, or the child exits from the signal; `ssh::keygen` maps that to `Interrupted`. `run_action` turns it into "cancelled" and the dashboard continues.
 - `tui::run` saves the termios before entering and restores it on every exit path, including errors.
-- On Windows, `interactive::TtyState` is the console input mode (`GetConsoleMode`/`SetConsoleMode` via `crossterm_winapi`) instead of termios, Ctrl-C arrives as a console control event (`ctrlc` uses `SetConsoleCtrlHandler`), and a child killed by Ctrl-C exits with `STATUS_CONTROL_C_EXIT`, which `ssh::keygen` maps to `Interrupted`. crossterm reports key releases on Windows, so the dashboard only acts on `KeyEventKind::Press`.
+- On Windows, `interactive::TtyState` is the console input mode (`GetConsoleMode`/`SetConsoleMode` via `crossterm_winapi`) instead of termios, Ctrl-C arrives as a console control event (`ctrlc` uses `SetConsoleCtrlHandler`), and a child killed by Ctrl-C exits with `STATUS_CONTROL_C_EXIT`, which `ssh::keygen` maps to `Interrupted`. crossterm reports key releases on Windows, so the dashboard only acts on `KeyEventKind::Press`. The classic console window (conhost, used by Windows PowerShell 5.1 and `cmd`) only has WGL4 fonts, so symbols such as `★ ✓ ▶ ⏎` render as boxes and shift the rest of the row; `ui::glyphs()` swaps in WGL4 stand-ins unless `WT_SESSION`, `TERM_PROGRAM` or `ConEmuANSI` is set (override with `GG_GLYPHS`).
 
 ## Design decisions
 

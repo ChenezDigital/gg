@@ -1,7 +1,7 @@
 # Builds static Linux (musl), macOS and Windows binaries for x86_64 and aarch64 when a version tag is pushed,
 # attaches them to a GitHub release with SHA-256 checksums and signed build-provenance attestations.
 #
-#   git tag v0.2.0 && git push origin v0.2.0
+#   git tag -a v0.2.0 -m "gg v0.2.0" && git push origin v0.2.0   (see docs/development.md#releasing)
 name: Release
 
 on:
@@ -34,6 +34,10 @@ jobs:
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
           if [ "v$version" != "$TAG" ]; then
             echo "::error::tag $TAG does not match Cargo.toml version $version"
+            exit 1
+          fi
+          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$version]' section"
             exit 1
           fi
 
@@ -152,6 +156,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
+          # The CHANGELOG section for this version, followed by GitHub's generated list of pull requests.
+          awk -v h="## [${TAG#v}]" 'index($0, h) == 1 {on = 1; next} on && /^## \[/ {exit} on' CHANGELOG.md > notes.md
           prerelease=""
           case "$TAG" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$TAG" dist/* --verify-tag --generate-notes --title "gg $TAG" $prerelease
+          gh release create "$TAG" dist/* --verify-tag --notes-file notes.md --generate-notes --title "gg $TAG" $prerelease

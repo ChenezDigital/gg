@@ -458,10 +458,17 @@ fn run_suspended(
     terminal::enable_raw_mode()?;
     terminal.clear()?;
     app.refresh()?;
+    let g = ui::glyphs();
     app.message = Some(match outcome {
-        Ok(true) => Line::from(vec![" ✓ ".green().bold(), Span::raw(format!("{label} finished"))]),
+        Ok(true) => Line::from(vec![
+            format!(" {} ", g.check).green().bold(),
+            Span::raw(format!("{label} finished")),
+        ]),
         Ok(false) => Line::from(vec![" · ".dark_gray(), format!("{label} cancelled").dark_gray()]),
-        Err(e) => Line::from(vec![" ✗ ".red().bold(), Span::raw(format!("{label}: {e:#}"))]),
+        Err(e) => Line::from(vec![
+            format!(" {} ", g.cross).red().bold(),
+            Span::raw(format!("{label}: {e:#}")),
+        ]),
     });
     Ok(())
 }
@@ -483,7 +490,12 @@ fn repo_lines(app: &App) -> Vec<Line<'static>> {
             Line::from("cd into a repository or press o to clone".dark_gray()),
         ];
     };
-    let mut head = vec![r.name.clone().bold(), "  ⎇ ".dark_gray(), r.branch.clone().cyan()];
+    let g = ui::glyphs();
+    let mut head = vec![
+        r.name.clone().bold(),
+        format!("  {} ", g.branch).dark_gray(),
+        r.branch.clone().cyan(),
+    ];
     if let Some((ahead, behind)) = r.ahead_behind {
         if ahead > 0 {
             head.push(format!("  ↑{ahead}").green());
@@ -496,14 +508,14 @@ fn repo_lines(app: &App) -> Vec<Line<'static>> {
         }
     }
     head.push(if r.dirty > 0 {
-        format!("  ✎ {} changed", r.dirty).yellow()
+        format!("  {} {} changed", g.edit, r.dirty).yellow()
     } else {
-        "  ✓ clean".green()
+        format!("  {} clean", g.check).green()
     });
 
     let who = match &r.profile {
         Some(p) => badge(&app.cfg, p),
-        None => "⚠ no profile (press r)".yellow().bold(),
+        None => format!("{} no profile (press r)", g.warn).yellow().bold(),
     };
     let mut lines = vec![
         Line::from(head),
@@ -516,13 +528,16 @@ fn repo_lines(app: &App) -> Vec<Line<'static>> {
         let tag = match state {
             RemoteState::Profile(p) => {
                 let mismatch = r.profile.as_ref().is_some_and(|i| i != p);
-                let mut s = vec![Span::styled(format!("✓ {p}"), Style::new().fg(color_of(&app.cfg, p)))];
+                let mut s = vec![Span::styled(
+                    format!("{} {p}", g.check),
+                    Style::new().fg(color_of(&app.cfg, p)),
+                )];
                 if mismatch {
-                    s = vec![format!("⚠ {p} ≠ identity").yellow()];
+                    s = vec![format!("{} {p} ≠ identity", g.warn).yellow()];
                 }
                 s
             }
-            RemoteState::Direct(h) => vec![format!("⚠ {h} directly").yellow()],
+            RemoteState::Direct(h) => vec![format!("{} {h} directly", g.warn).yellow()],
             RemoteState::Unmanaged => vec!["· unmanaged".dark_gray()],
         };
         let mut spans = vec![format!("{name} ").bold(), url.clone().dark_gray(), "  ".into()];
@@ -541,20 +556,21 @@ fn default_span(cfg: &Config) -> Span<'static> {
 
 fn profile_lines(app: &App) -> Vec<Line<'static>> {
     let cfg = &app.cfg;
+    let g = ui::glyphs();
     let mut lines: Vec<Line> = cfg
         .profiles
         .iter()
         .map(|(name, p)| {
             let star = if cfg.default.as_deref() == Some(name) {
-                "★ ".yellow()
+                format!("{} ", g.star).yellow()
             } else {
                 "  ".into()
             };
             let user = p.username.as_deref().map(|u| format!(" @{u}")).unwrap_or_default();
             let key = if p.key_path().exists() {
-                "  ✓ key".green()
+                format!("  {} key", g.check).green()
             } else {
-                "  ✗ key".red()
+                format!("  {} key", g.cross).red()
             };
             Line::from(vec![star, badge(cfg, name), user.dark_gray(), key])
         })
@@ -602,7 +618,11 @@ fn list_widget(app: &App, col: usize, title: &str) -> List<'static> {
     List::new(items)
         .block(block)
         .highlight_style(highlight)
-        .highlight_symbol(if focused { "▶ " } else { "  " })
+        .highlight_symbol(if focused {
+            format!("{} ", ui::glyphs().pointer)
+        } else {
+            "  ".into()
+        })
         .highlight_spacing(HighlightSpacing::Always)
 }
 
@@ -655,7 +675,7 @@ fn draw(f: &mut ratatui::Frame, app: &mut App) {
     for (k, d) in [
         ("←→", "column"),
         ("↑↓", "move"),
-        ("⏎", "run"),
+        (ui::glyphs().enter, "run"),
         ("key", "shortcut"),
         ("esc", "quit"),
     ] {

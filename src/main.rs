@@ -120,7 +120,7 @@ enum RemoteCmd {
 
 #[derive(Subcommand)]
 enum ProfileCmd {
-    /// List profiles (★ marks the default)
+    /// List profiles (★ or * marks the default)
     List,
     /// Add a profile (prompts for anything not given as a flag)
     Add {
