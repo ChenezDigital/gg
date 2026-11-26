@@ -150,12 +150,6 @@ const ACCOUNTS: &[Entry] = &[
         Action::SshTest,
     ),
     item(
-        'y',
-        "Sync config",
-        "Write gg-managed Host entries to ~/.ssh/config.",
-        Action::SshSync,
-    ),
-    item(
         'k',
         "Generate key",
         "Create an ed25519 key for a profile.",
@@ -276,9 +270,13 @@ impl App {
 
     fn refresh(&mut self) -> Result<()> {
         self.cfg = Config::load()?;
+        let had_repo = self.repo.is_some();
         self.repo = RepoInfo::load(&self.cfg);
         if self.repo.is_none() {
             self.col = 1;
+        } else if !had_repo {
+            // Just moved into a repository (a clone): its actions are what's next.
+            self.col = 0;
         }
         Ok(())
     }
@@ -452,6 +450,9 @@ fn run_suspended(
                 break;
             }
         }
+        // Raw mode: "\r\n" ends the line so the shell prompt after leaving gg starts on its own line.
+        print!("\r\n");
+        io::stdout().flush()?;
     }
 
     execute!(io::stdout(), terminal::EnterAlternateScreen)?;

@@ -47,7 +47,7 @@ See [docs/installation.md](docs/installation.md) for pinned versions, checksum a
 ## Quick start
 
 ```bash
-gg setup                    # imports ~/.ssh/config hosts, creates profiles, keys and SSH aliases
+gg setup                    # imports ~/.ssh/config hosts and gh accounts, creates profiles, keys and SSH aliases
 gg ssh test                 # checks which account each key authenticates as
 gg clone octocat/project      # clones as the default profile
 cd project && gg use work   # or switches this repository to another account

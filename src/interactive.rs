@@ -1,14 +1,15 @@
-use std::fs;
 use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Result, bail};
+use console::style;
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Input, Select};
 
 use crate::commands;
 use crate::config::{Config, Profile, config_path, validate_profile_name};
-use crate::{git, ssh};
+use crate::{gh, git, ssh};
 
 pub fn is_tty() -> bool {
     std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
@@ -66,6 +67,10 @@ pub fn restore_tty(saved: Option<TtyState>) {
 pub static DASHBOARD: AtomicBool = AtomicBool::new(false);
 static PROMPTING: AtomicBool = AtomicBool::new(false);
 static CANCELLED: AtomicBool = AtomicBool::new(false);
+/// The dashboard moved into a repository cloned from it (see `Action::Clone`).
+pub static SWITCHED: AtomicBool = AtomicBool::new(false);
+/// A shell started by `open_shell` owns the terminal; its Ctrl-C is not ours.
+static CHILD_SHELL: AtomicBool = AtomicBool::new(false);
 
 /// Runs a dialoguer prompt so that a Ctrl-C in the dashboard cancels it as `ErrorKind::Interrupted`.
 /// On Unix the read itself fails that way. On Windows the console turns Ctrl-C into a control
@@ -125,6 +130,9 @@ fn install_interrupt_handler() {
     INSTALLED.call_once(|| {
         let saved = save_tty();
         let _ = ctrlc::set_handler(move || {
+            if CHILD_SHELL.load(Ordering::SeqCst) {
+                return;
+            }
             // In the dashboard a Ctrl-C only cancels the current prompt (see `run_action`).
             if DASHBOARD.load(Ordering::SeqCst) {
                 if PROMPTING.load(Ordering::SeqCst) {
@@ -142,8 +150,61 @@ fn install_interrupt_handler() {
     });
 }
 
+/// Prompt prefixes use the same glyphs as `ui::ok` / `ui::fail`, so answered prompts and
+/// status lines share one check/cross style.
+/// Asks whether to continue working inside a freshly cloned repository.
+pub fn offer_switch(dir: &Path) -> Result<bool> {
+    install_interrupt_handler();
+    println!();
+    confirm(&format!("Switch to '{}' to work in it?", dir.display()), true)
+}
+
+/// A process can't change its parent shell's directory, so this starts a new shell in `dir`
+/// (`$SHELL` on Unix, PowerShell on Windows) and returns its exit code once the user leaves it.
+pub fn open_shell(dir: &Path) -> Result<i32> {
+    let shell = shell_program();
+    println!(
+        "{}",
+        crate::ui::dim(format!(
+            "Starting {} in {} (type `exit` to return to the previous directory)",
+            shell.display(),
+            dir.display()
+        ))
+    );
+    let mut cmd = std::process::Command::new(&shell);
+    if cfg!(windows) {
+        cmd.arg("-NoLogo");
+    }
+    CHILD_SHELL.store(true, Ordering::SeqCst);
+    let status = cmd.current_dir(dir).status();
+    CHILD_SHELL.store(false, Ordering::SeqCst);
+    let status = status.map_err(|e| anyhow::anyhow!("could not start {}: {e}", shell.display()))?;
+    Ok(status.code().unwrap_or(0))
+}
+
+fn shell_program() -> PathBuf {
+    if cfg!(windows) {
+        let on_path = |exe: &str| {
+            std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(exe).is_file()))
+        };
+        return PathBuf::from(if on_path("pwsh.exe") {
+            "pwsh.exe"
+        } else {
+            "powershell.exe"
+        });
+    }
+    std::env::var_os("SHELL")
+        .filter(|s| !s.is_empty())
+        .map_or_else(|| PathBuf::from("/bin/sh"), PathBuf::from)
+}
+
 fn theme() -> ColorfulTheme {
-    ColorfulTheme::default()
+    let g = crate::ui::glyphs();
+    ColorfulTheme {
+        success_prefix: style(g.check.to_string()).for_stderr().green().bold(),
+        error_prefix: style(g.cross.to_string()).for_stderr().red().bold(),
+        ..ColorfulTheme::default()
+    }
 }
 
 pub fn input_text(prompt: &str, default: &str) -> Result<String> {
@@ -237,6 +298,132 @@ fn ask_new_profile_name(cfg: &Config, suggested: &str) -> Result<String> {
     }
 }
 
+/// Asks for a profile name and the details of a `gh` account, pre-filled from its GitHub profile.
+fn profile_from_gh(cfg: &Config, acc: &gh::Account) -> Result<(String, Profile)> {
+    let name = ask_new_profile_name(cfg, &gh::profile_name_for(&acc.user))?;
+    let mut base = Profile::with_defaults(&name);
+    fill_from_gh(&mut base, acc);
+    let p = prompt_profile(&name, base)?;
+    Ok((name, p))
+}
+
+/// Copies a `gh` account's host and username into `p`, plus the name and email its GitHub
+/// profile reports (left as they are when it can't be read).
+fn fill_from_gh(p: &mut Profile, acc: &gh::Account) {
+    println!(
+        "{}",
+        crate::ui::dim(format!("Reading {}'s profile on {} with gh…", acc.user, acc.host))
+    );
+    let d = gh::details(acc).unwrap_or_else(|e| {
+        eprintln!(
+            "{}",
+            crate::ui::warn(format!("could not read the account ({e:#}); enter the details below"))
+        );
+        gh::Details::default()
+    });
+    p.hostname = acc.host.clone();
+    p.username = Some(acc.user.clone());
+    if let Some(n) = d.name {
+        p.name = n;
+    }
+    if let Some(e) = d.email {
+        p.email = e;
+    }
+}
+
+/// Offers `candidates` plus a final "none" entry. `Ok(None)` means Esc was pressed.
+fn pick_gh_account<'a>(
+    prompt: &str,
+    candidates: &'a [gh::Account],
+    none: &str,
+) -> Result<Option<Option<&'a gh::Account>>> {
+    let mut items: Vec<String> = candidates
+        .iter()
+        .map(|a| format!("{} on {}  (from GitHub CLI)", a.user, a.host))
+        .collect();
+    items.push(none.to_string());
+    Ok(select(prompt, &items, 0)?.map(|i| candidates.get(i)))
+}
+
+/// For `gg profile add <name>` without author and email: offers the `gh` accounts that have no
+/// profile yet as a starting point. Returns the base profile to prompt with.
+pub fn new_profile_base(cfg: &Config, name: &str) -> Result<Profile> {
+    let mut p = Profile::with_defaults(name);
+    let candidates = if is_tty() { gh::unimported(cfg) } else { Vec::new() };
+    if candidates.is_empty() {
+        return Ok(p);
+    }
+    install_interrupt_handler();
+    match pick_gh_account("Start from", &candidates, "Enter the details myself")? {
+        Some(Some(acc)) => fill_from_gh(&mut p, acc),
+        Some(None) => {}
+        None => return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled").into()),
+    }
+    Ok(p)
+}
+
+/// Shows a profile's public key. When `gh` is logged in to the profile's account, offers to add
+/// the key there (asking for gh's key permission if needed); otherwise says where to paste it.
+pub fn share_public_key(name: &str, p: &Profile) -> Result<()> {
+    ssh::show_public_key(p)?;
+    let acc = if is_tty() { gh::account_for(p) } else { None };
+    let Some(acc) = acc else {
+        ssh::print_key_hint(p);
+        return Ok(());
+    };
+    install_interrupt_handler();
+    println!();
+    if !confirm(
+        &format!("Add this key to the {} account '{}' with gh?", acc.host, acc.user),
+        true,
+    )? {
+        ssh::print_key_hint(p);
+        return Ok(());
+    }
+    let title = format!("gg {name} ({})", p.ssh_alias);
+    let key = ssh::public_key_path(p);
+    let mut granted = false;
+    loop {
+        match gh::add_key(&acc, &key, &title) {
+            Ok(gh::Upload::Added) => {
+                println!(
+                    "{}",
+                    crate::ui::ok(format!("Key added to {} on {}", acc.user, acc.host))
+                );
+                return Ok(());
+            }
+            Ok(gh::Upload::NeedsScope) if !granted => {
+                println!(
+                    "gh's sign-in for '{}' may not add SSH keys yet (it needs the {} permission).",
+                    acc.user,
+                    gh::KEY_SCOPE
+                );
+                if !confirm("Grant it now? gh opens a browser sign-in", true)? {
+                    break;
+                }
+                if let Err(e) = gh::grant_key_scope(&acc) {
+                    eprintln!("{}", crate::ui::fail(format!("{e:#}")));
+                    break;
+                }
+                granted = true;
+            }
+            Ok(gh::Upload::NeedsScope) => {
+                eprintln!(
+                    "{}",
+                    crate::ui::fail(format!("gh still lacks the {} permission", gh::KEY_SCOPE))
+                );
+                break;
+            }
+            Err(e) => {
+                eprintln!("{}", crate::ui::fail(format!("{e:#}")));
+                break;
+            }
+        }
+    }
+    ssh::print_key_hint(p);
+    Ok(())
+}
+
 fn insert_profile(cfg: &mut Config, name: String, p: Profile) -> Result<()> {
     if let Some((other, _)) = cfg.profile_by_alias(&p.ssh_alias) {
         bail!("SSH alias '{}' is already used by profile '{other}'", p.ssh_alias);
@@ -272,14 +459,46 @@ pub fn setup(cfg: &mut Config) -> Result<()> {
         }
         let suggested = h.alias.split_once('-').map_or(h.alias.as_str(), |(_, rest)| rest);
         let name = ask_new_profile_name(cfg, suggested)?;
-        let base = Profile {
+        let mut base = Profile {
             hostname: hostname.clone(),
             ssh_alias: h.alias.clone(),
             ssh_key: key.clone(),
             ..Profile::with_defaults(&name)
         };
+        // Linking the host to its gh account fills in the details and keeps that account from
+        // being offered again as a separate profile below.
+        let candidates: Vec<gh::Account> = gh::unimported(cfg)
+            .into_iter()
+            .filter(|a| a.host.eq_ignore_ascii_case(hostname))
+            .collect();
+        if !candidates.is_empty()
+            && let Some(Some(acc)) = pick_gh_account(
+                &format!("Which GitHub CLI account does '{}' sign in as?", h.alias),
+                &candidates,
+                "None of these / not sure",
+            )?
+        {
+            fill_from_gh(&mut base, acc);
+            base.hostname = hostname.clone();
+        }
         let p = prompt_profile(&name, base)?;
         insert_profile(cfg, name, p)?;
+    }
+
+    for acc in gh::unimported(cfg) {
+        if !confirm(
+            &format!(
+                "Found GitHub CLI account '{}' ({}). Create a profile for it?",
+                acc.user, acc.host
+            ),
+            true,
+        )? {
+            continue;
+        }
+        let (name, p) = profile_from_gh(cfg, &acc)?;
+        if let Err(e) = insert_profile(cfg, name, p) {
+            eprintln!("error: {e}");
+        }
     }
 
     loop {
@@ -321,24 +540,11 @@ pub fn setup(cfg: &mut Config) -> Result<()> {
             true,
         )? {
             ssh::keygen(&p, false)?;
+            share_public_key(&name, &p)?;
         }
     }
 
-    let path = ssh::config_file()?;
-    let old = fs::read_to_string(&path).unwrap_or_default();
-    let plan = ssh::plan_sync(&old, cfg);
-    if plan.content != old {
-        let what = if plan.added.is_empty() {
-            "Remove stale gg entries".into()
-        } else {
-            format!("Add {}", plan.added.join(", "))
-        };
-        if confirm(&format!("{what} in {}? (a backup is made)", path.display()), true)? {
-            ssh::sync(cfg)?;
-        }
-    } else {
-        ssh::sync(cfg)?;
-    }
+    ssh::sync(cfg)?;
 
     if confirm("Test SSH connections now?", true)? {
         commands::ssh_test(cfg, None)?;
@@ -367,7 +573,6 @@ pub enum Action {
     ProfileEdit,
     ProfileRemove,
     SshTest,
-    SshSync,
     SshKeygen,
     SshPubkey,
     Setup,
@@ -377,6 +582,7 @@ pub enum Action {
 pub fn menu() -> Result<i32> {
     require_tty("The interactive menu")?;
     let mut cfg = Config::load()?;
+    ssh::auto_sync(&cfg, false);
     if cfg.profiles.is_empty() {
         println!("Welcome to gg! No profiles are configured yet.");
         if !confirm("Run setup now?", true)? {
@@ -388,6 +594,9 @@ pub fn menu() -> Result<i32> {
         }
     }
     crate::tui::run()?;
+    if SWITCHED.load(Ordering::SeqCst) {
+        return open_shell(&std::env::current_dir()?);
+    }
     Ok(0)
 }
 
@@ -449,7 +658,16 @@ fn run_action_inner(cfg: &mut Config, action: Action) -> Result<bool> {
             if !dir.is_empty() {
                 args.push(dir);
             }
-            commands::clone(cfg, Some(&profile), &args)?;
+            if let (_, Some(dir)) = commands::clone_repo(cfg, Some(&profile), &args)?
+                && offer_switch(&dir)?
+            {
+                std::env::set_current_dir(&dir)?;
+                SWITCHED.store(true, Ordering::SeqCst);
+                println!(
+                    "{}",
+                    crate::ui::dim("gg now works in this repository; leaving gg opens a shell here.")
+                );
+            }
         }
         Action::Status => {
             git::passthrough(&["status"])?;
@@ -541,8 +759,25 @@ fn run_action_inner(cfg: &mut Config, action: Action) -> Result<bool> {
             commands::remote_delete(&r)?;
         }
         Action::ProfileAdd => {
-            let name = ask_new_profile_name(cfg, "")?;
-            commands::profile_add(cfg, &name, &Default::default())?;
+            let candidates = gh::unimported(cfg);
+            let choice = if candidates.is_empty() {
+                None
+            } else {
+                let Some(c) = pick_gh_account("Start from", &candidates, "Enter the details myself")? else {
+                    return Ok(false);
+                };
+                c
+            };
+            match choice {
+                Some(acc) => {
+                    let (name, p) = profile_from_gh(cfg, acc)?;
+                    commands::profile_insert(cfg, &name, p)?;
+                }
+                None => {
+                    let name = ask_new_profile_name(cfg, "")?;
+                    commands::profile_add(cfg, &name, &Default::default())?;
+                }
+            }
         }
         Action::ProfileEdit => {
             let Some(n) = pick_profile(cfg, "Edit profile", None)? else {
@@ -562,18 +797,19 @@ fn run_action_inner(cfg: &mut Config, action: Action) -> Result<bool> {
         Action::SshTest => {
             commands::ssh_test(cfg, None)?;
         }
-        Action::SshSync => ssh::sync(cfg)?,
         Action::SshKeygen => {
             let Some(n) = pick_profile(cfg, "Generate key for", None)? else {
                 return Ok(false);
             };
-            ssh::keygen(cfg.get(&n)?, false)?;
+            let p = cfg.get(&n)?;
+            ssh::keygen(p, false)?;
+            share_public_key(&n, p)?;
         }
         Action::SshPubkey => {
             let Some(n) = pick_profile(cfg, "Show public key of", None)? else {
                 return Ok(false);
             };
-            ssh::print_public_key(cfg.get(&n)?)?;
+            share_public_key(&n, cfg.get(&n)?)?;
         }
         Action::Setup => setup(cfg)?,
     }

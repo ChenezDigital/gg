@@ -11,6 +11,7 @@ src/
 ├── config.rs       Profile/Config types, config.toml location, load/save, validation
 ├── git.rs          Remote URL parsing and rewriting, git process helpers
 ├── ssh.rs          ~/.ssh/config parsing, managed block, keygen, connection test
+├── gh.rs           Optional GitHub CLI integration: account import, adding keys with gh
 ├── commands.rs     Command implementations (whoami, use, clone, remote, profile, passthrough)
 ├── interactive.rs  Prompts (dialoguer), setup wizard, dashboard actions, terminal state
 ├── tui.rs          Dashboard (ratatui + crossterm)
@@ -100,7 +101,7 @@ Any other host returns `None`. So a GitLab remote is never repointed at a GitHub
 
 Lines are kept byte for byte, including `\r` in CRLF files. `strip_block` removes a block only when a begin marker has an end marker after it; a stray marker line is dropped, but the lines after it are kept.
 
-`sync` writes a backup and then the new content. A newly created file gets mode 600, and `~/.ssh` is created with mode 700. It is idempotent: running it again produces identical bytes.
+`auto_sync` runs at the start of every command and after profile changes; it does nothing unless the plan differs from the file, and failures are only warnings. `sync` (`gg ssh sync`) also reports every alias. Either one writes a backup and then the new content. A newly created file gets mode 600, and `~/.ssh` is created with mode 700. It is idempotent: running it again produces identical bytes.
 
 `ssh::test` runs `ssh -T -o ConnectTimeout=10 git@<alias>` and searches the output for GitHub's `Hi <login>!` greeting.
 

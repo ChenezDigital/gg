@@ -244,20 +244,39 @@ pub fn ensure_ssh_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// Writes missing Host aliases for all profiles into ~/.ssh/config (backing it up first).
+/// Writes missing Host aliases for all profiles into ~/.ssh/config (backing it up first),
+/// reporting every alias.
 pub fn sync(cfg: &Config) -> Result<()> {
-    ensure_ssh_dir()?;
+    write_sync(cfg, true)
+}
+
+/// Brings ~/.ssh/config in line with the profiles without asking. Runs on every `gg` start and
+/// after profile changes; it writes (and reports, on stderr) only when something is missing or
+/// stale. `report_existing` also lists aliases you defined yourself, with any mismatch.
+/// Failures are warnings: an unwritable ~/.ssh must not break unrelated commands.
+pub fn auto_sync(cfg: &Config, report_existing: bool) {
+    if let Err(e) = write_sync(cfg, report_existing) {
+        eprintln!("{}", ui::warn(format!("could not update the SSH config: {e:#}")));
+    }
+}
+
+fn write_sync(cfg: &Config, verbose: bool) -> Result<()> {
     let path = config_file()?;
-    let existed = path.exists();
-    let old = if existed {
-        fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?
-    } else {
-        String::new()
+    let old = match fs::read_to_string(&path) {
+        Ok(s) => Some(s),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    let plan = plan_sync(&old, cfg);
-    for (alias, issue) in &plan.existing {
+    let plan = plan_sync(old.as_deref().unwrap_or(""), cfg);
+    if !verbose && plan.content == old.as_deref().unwrap_or("") {
+        return Ok(());
+    }
+    ensure_ssh_dir()?;
+    let existed = old.is_some();
+    let old = old.unwrap_or_default();
+    for (alias, issue) in plan.existing.iter().filter(|_| verbose) {
         match issue {
-            None => println!(
+            None => eprintln!(
                 "{}",
                 ui::ok(format!("{alias}: already configured in {}", path.display()))
             ),
@@ -268,13 +287,13 @@ pub fn sync(cfg: &Config) -> Result<()> {
         }
     }
     if plan.content == old {
-        println!("{}", ui::ok("SSH config is up to date."));
+        eprintln!("{}", ui::ok("SSH config is up to date."));
         return Ok(());
     }
     if existed {
         let backup = path.with_file_name("config.gg-backup");
         fs::copy(&path, &backup).with_context(|| format!("backing up to {}", backup.display()))?;
-        println!(
+        eprintln!(
             "{}",
             ui::dim(format!("Backed up {} to {}", path.display(), backup.display()))
         );
@@ -284,14 +303,14 @@ pub fn sync(cfg: &Config) -> Result<()> {
         set_mode(&path, 0o600)?;
     }
     for alias in &plan.added {
-        println!(
+        eprintln!(
             "{} {alias}: added to {}",
             console::style("+").green().bold(),
             path.display()
         );
     }
     if plan.added.is_empty() {
-        println!("Removed stale gg-managed entries from {}", path.display());
+        eprintln!("Removed stale gg-managed entries from {}", path.display());
     }
     Ok(())
 }
@@ -328,19 +347,34 @@ pub fn keygen(profile: &Profile, no_passphrase: bool) -> Result<()> {
     if !status.success() {
         bail!("ssh-keygen failed");
     }
-    print_public_key(profile)
+    Ok(())
 }
 
+pub fn public_key_path(profile: &Profile) -> PathBuf {
+    let mut p = profile.key_path().into_os_string();
+    p.push(".pub");
+    PathBuf::from(p)
+}
+
+/// Prints the public key and where to add it.
 pub fn print_public_key(profile: &Profile) -> Result<()> {
-    let mut pub_path = profile.key_path().into_os_string();
-    pub_path.push(".pub");
-    let pub_path = PathBuf::from(pub_path);
+    show_public_key(profile)?;
+    print_key_hint(profile);
+    Ok(())
+}
+
+pub fn show_public_key(profile: &Profile) -> Result<()> {
+    let pub_path = public_key_path(profile);
     let key = fs::read_to_string(&pub_path).with_context(|| format!("reading {}", pub_path.display()))?;
     println!(
         "\n{}\n\n{}",
         ui::heading(&format!("Public key ({})", pub_path.display())),
         ui::bold(key.trim())
     );
+    Ok(())
+}
+
+pub fn print_key_hint(profile: &Profile) {
     if profile.hostname.eq_ignore_ascii_case("github.com") {
         println!(
             "\nAdd it to the {} account at https://github.com/settings/ssh/new",
@@ -349,7 +383,6 @@ pub fn print_public_key(profile: &Profile) -> Result<()> {
     } else {
         println!("\nAdd it to your account's SSH keys on {}.", profile.hostname);
     }
-    Ok(())
 }
 
 /// Runs `ssh -T git@<alias>` and reports which account authenticated.

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
@@ -446,7 +446,21 @@ fn clone_dir_name(url: &str, bare: bool) -> String {
     if bare { format!("{base}.git") } else { base.to_string() }
 }
 
+/// `gg clone`: after a successful non-bare clone on a terminal, offers a shell in the new repository.
 pub fn clone(cfg: &Config, profile: Option<&str>, input: &[String]) -> Result<i32> {
+    let (code, dir) = clone_repo(cfg, profile, input)?;
+    if let Some(dir) = dir
+        && interactive::is_tty()
+        && interactive::offer_switch(&dir)?
+    {
+        return interactive::open_shell(&dir);
+    }
+    Ok(code)
+}
+
+/// Clones and configures the repository. Returns git's exit code and, after a successful
+/// non-bare clone, the new working tree.
+pub fn clone_repo(cfg: &Config, profile: Option<&str>, input: &[String]) -> Result<(i32, Option<PathBuf>)> {
     let mut ca = parse_clone_args(input, profile.map(str::to_string))?;
     let (name, p) = cfg.resolve(ca.profile.as_deref())?;
     let repo_idx = ca.positionals[0];
@@ -478,14 +492,14 @@ pub fn clone(cfg: &Config, profile: Option<&str>, input: &[String]) -> Result<i3
     full.extend(ca.args);
     let code = git::passthrough(&full)?;
     if code != 0 {
-        return Ok(code);
+        return Ok((code, None));
     }
     git::apply_profile(Some(Path::new(&dir)), &name, p, cfg)?;
     println!(
         "{}",
         ui::ok(format!("Repository '{dir}' configured for {}", ui::badge(cfg, &name)))
     );
-    Ok(0)
+    Ok((0, (!ca.bare).then(|| PathBuf::from(dir))))
 }
 
 pub fn profile_add(cfg: &mut Config, name: &str, fields: &ProfileFields) -> Result<()> {
@@ -493,10 +507,24 @@ pub fn profile_add(cfg: &mut Config, name: &str, fields: &ProfileFields) -> Resu
     if cfg.profiles.contains_key(name) {
         bail!("profile '{name}' already exists; use `gg profile edit {name}`");
     }
-    let mut p = Profile::with_defaults(name);
+    let prompting = fields.author.is_none() || fields.email.is_none();
+    let mut p = if prompting {
+        interactive::new_profile_base(cfg, name)?
+    } else {
+        Profile::with_defaults(name)
+    };
     fields.apply(&mut p);
-    if fields.author.is_none() || fields.email.is_none() {
+    if prompting {
         p = interactive::prompt_profile(name, p)?;
+    }
+    profile_insert(cfg, name, p)
+}
+
+/// Saves a new, already prompted-for profile and prints what to do next.
+pub fn profile_insert(cfg: &mut Config, name: &str, p: Profile) -> Result<()> {
+    validate_profile_name(name)?;
+    if cfg.profiles.contains_key(name) {
+        bail!("profile '{name}' already exists; use `gg profile edit {name}`");
     }
     p.validate()?;
     if let Some((other, _)) = cfg.profile_by_alias(&p.ssh_alias) {
@@ -508,6 +536,7 @@ pub fn profile_add(cfg: &mut Config, name: &str, fields: &ProfileFields) -> Resu
     }
     cfg.save()?;
     println!("{}", ui::ok(format!("Added profile {}", ui::badge(cfg, name))));
+    ssh::auto_sync(cfg, true);
     next_steps(name, &p);
     Ok(())
 }
@@ -517,10 +546,6 @@ fn next_steps(name: &str, p: &Profile) {
     if !p.key_path().exists() {
         println!("  gg ssh keygen {name}   # create {}", p.ssh_key);
     }
-    println!(
-        "  gg ssh sync            # add '{}' to ~/.ssh/config if missing",
-        p.ssh_alias
-    );
     println!("  gg ssh test {name}");
 }
 
@@ -539,7 +564,8 @@ pub fn profile_edit(cfg: &mut Config, name: &str, fields: &ProfileFields) -> Res
     cfg.save()?;
     println!("{}", ui::ok(format!("Updated profile {}", ui::badge(cfg, name))));
     if old.is_some_and(|o| o.ssh_alias != p.ssh_alias || o.ssh_key != p.ssh_key || o.hostname != p.hostname) {
-        println!("SSH settings changed: run `gg ssh sync`, then `gg use {name}` in affected repositories.");
+        ssh::auto_sync(cfg, true);
+        println!("SSH settings changed: run `gg use {name}` in affected repositories.");
     }
     Ok(())
 }
@@ -553,10 +579,9 @@ pub fn profile_remove(cfg: &mut Config, name: &str) -> Result<()> {
     cfg.save()?;
     println!(
         "{}",
-        ui::ok(format!(
-            "Removed profile '{name}' (SSH keys were not deleted). Run `gg ssh sync` to drop its managed SSH entry."
-        ))
+        ui::ok(format!("Removed profile '{name}' (SSH keys were not deleted)."))
     );
+    ssh::auto_sync(cfg, false);
     Ok(())
 }
 

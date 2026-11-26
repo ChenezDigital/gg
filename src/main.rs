@@ -140,7 +140,7 @@ enum ProfileCmd {
 
 #[derive(Subcommand)]
 enum SshCmd {
-    /// Add missing Host aliases for all profiles to ~/.ssh/config (your own entries are never modified)
+    /// Show how ~/.ssh/config matches the profiles (gg keeps it in sync automatically; your own entries are never modified)
     Sync,
     /// Generate an ed25519 key for a profile
     Keygen {
@@ -175,6 +175,10 @@ fn run(cli: Cli) -> Result<i32> {
         return Ok(0);
     };
     let mut cfg = Config::load()?;
+    // `gg ssh sync` and `gg setup` report the sync themselves.
+    if !matches!(cmd, Cmd::Ssh(SshCmd::Sync) | Cmd::Setup) {
+        ssh::auto_sync(&cfg, false);
+    }
     match cmd {
         Cmd::Whoami => commands::whoami(&cfg)?,
         Cmd::Use { profile, default } => {
@@ -231,8 +235,10 @@ fn run(cli: Cli) -> Result<i32> {
                 ssh::sync(&cfg)?
             }
             SshCmd::Keygen { profile, no_passphrase } => {
-                ssh::keygen(cfg.get(&profile)?, no_passphrase)?;
-                println!("Then run: gg ssh sync && gg ssh test {profile}");
+                let p = cfg.get(&profile)?;
+                ssh::keygen(p, no_passphrase)?;
+                interactive::share_public_key(&profile, p)?;
+                println!("Then run: gg ssh test {profile}");
             }
             SshCmd::Pubkey { profile } => ssh::print_public_key(cfg.get(&profile)?)?,
             SshCmd::Test { profile } => return commands::ssh_test(&cfg, profile.as_deref()),
