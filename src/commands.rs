@@ -74,7 +74,7 @@ pub fn list_profiles(cfg: &Config) {
     let w = cfg.profiles.keys().map(String::len).max().unwrap_or(0) + 2;
     for (name, p) in &cfg.profiles {
         let mark = if cfg.default.as_deref() == Some(name) {
-            ui::bold("★")
+            ui::bold(ui::glyphs().star)
         } else {
             " ".into()
         };
@@ -98,7 +98,7 @@ pub fn list_profiles(cfg: &Config) {
             key_status(p)
         );
     }
-    println!("{}", ui::dim("  ★ default for new clones"));
+    println!("{}", ui::dim(format!("  {} default for new clones", ui::glyphs().star)));
 }
 
 pub enum RemoteState {

@@ -55,7 +55,7 @@ Run `gg` with no arguments in a terminal. If no profiles exist, it offers to run
   - `⚠ github.com directly`: no account key is used, so push fails with `Permission denied (publickey)`. Fix it with `gg use`, or let `gg push` repair it.
   - `· unmanaged`: another host.
 
-**Profiles pane:** `★` marks the default profile; it also shows `@username` and whether the key file exists.
+**Profiles pane:** `★` (`*` in the classic Windows console) marks the default profile; it also shows `@username` and whether the key file exists.
 
 **Keys**
 

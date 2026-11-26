@@ -131,18 +131,27 @@ Dependabot does not update the gitleaks CLI or cargo-fuzz (`CARGO_FUZZ_VERSION` 
 
 ## Releasing
 
-Releases are built entirely by GitHub Actions from a tag.
+Releases are built entirely by GitHub Actions from a tag. Versions follow [Semantic Versioning](https://semver.org/):
 
-1. Update `version` in `Cargo.toml`, then run `cargo check` so `Cargo.lock` is updated.
-2. Commit, then tag and push:
+| Change | Bump | Example |
+|---|---|---|
+| Bug fixes only, no behavior anyone relies on changes | patch | 0.1.0 → 0.1.1 |
+| New commands, options or platforms; backward compatible | minor | 0.1.1 → 0.2.0 |
+| Breaking change (removed or renamed commands/options, incompatible `config.toml`) | major (minor while 0.x) | 0.9.0 → 0.10.0 / 1.4.0 → 2.0.0 |
+
+Published tags are never moved or reused; if a release is wrong, ship the next patch version.
+
+1. On a branch, update `version` in `Cargo.toml` and run `cargo check` so `Cargo.lock` follows. In `CHANGELOG.md`, move the `Unreleased` entries under a new `## [x.y.z] - YYYY-MM-DD` heading and update the compare links at the bottom.
+2. Open a pull request ("Release vx.y.z") and merge it once CI passes.
+3. Tag the merge commit on `main` and push the tag:
 
    ```bash
-   git commit -am "Release v0.2.0"
-   git tag v0.2.0
-   git push origin main v0.2.0
+   git switch main && git pull --ff-only
+   git tag -a v0.2.0 -m "gg v0.2.0"
+   git push origin v0.2.0
    ```
 
-3. `release.yml` then:
+4. `release.yml` then:
    1. **Check version**: fails if the tag is not `v` + the `Cargo.toml` version.
    2. **Build**: builds each target natively on its own runner, with no cross-compiling:
 
@@ -160,7 +169,7 @@ Releases are built entirely by GitHub Actions from a tag.
 
 Asset names contain no version, so `releases/latest/download/gg-<target>.tar.gz` (or `.zip`) always points at the newest release; `install.sh` and `install.ps1` rely on this.
 
-If a release job fails, fix the problem, delete the tag (`git push --delete origin v0.2.0 && git tag -d v0.2.0`) and any draft release, then tag again.
+If a release job fails before anything is published (no GitHub release exists yet), fix the problem, delete the tag (`git push --delete origin v0.2.0 && git tag -d v0.2.0`) and tag again. Once a release is published, leave its tag alone and release the next patch version instead.
 
 ### macOS signing
 

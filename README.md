@@ -66,6 +66,7 @@ gg                          # opens the dashboard
 | [Configuration](docs/configuration.md) | Config file format, environment variables, Git and SSH files `gg` touches |
 | [Architecture](docs/architecture.md) | How `gg` works internally: modules, URL rewriting, remote repair, terminal handling |
 | [Development](docs/development.md) | Building, testing, CI, security scanning and the release process |
+| [Changelog](CHANGELOG.md) | What changed in each release |
 
 ## License
 

@@ -136,6 +136,7 @@ ssh-keygen -t ed25519 -C "<email>" -f <ssh_key>      # -N "" with --no-passphras
 | `CI` | When set, the new-release check is skipped |
 | `XDG_CACHE_HOME` | Base cache directory for `gg/latest-version` (Linux) |
 | `NO_COLOR` | Disables colors (also disabled when the output is not a terminal) |
+| `GG_GLYPHS` | `plain` or `fancy` forces the symbol set. By default, Windows uses plain symbols (`*`, `√`, `×`, `►`) unless the terminal is Windows Terminal, VS Code or ConEmu, because the classic console window can't draw `★ ✓ ✗ ▶` |
 | `GG_VERSION`, `GG_INSTALL_DIR`, `GG_REPO`, `GG_BASE_URL` | Installer only; see [installation](installation.md#install-script) |
 
 Git's own variables (`GIT_SSH_COMMAND`, `GIT_DIR`, …) work as usual because `gg` runs the real `git`.
