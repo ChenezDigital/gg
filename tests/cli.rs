@@ -23,6 +23,7 @@ impl Env {
         let h = self.home.path();
         cmd.env("HOME", h)
             .env("USERPROFILE", h)
+            .env("GG_GLYPHS", "fancy")
             .env("XDG_CONFIG_HOME", h.join(".config"))
             .env("XDG_CACHE_HOME", h.join(".cache"))
             .env("GIT_CONFIG_GLOBAL", h.join("gitconfig"))
