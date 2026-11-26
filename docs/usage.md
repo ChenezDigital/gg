@@ -33,7 +33,7 @@ Run `gg` with no arguments in a terminal. If no profiles exist, it offers to run
 ```
  gg  git account switcher  ·  repository
 ╭ Repository ─────────────────────────────────╮╭ Profiles ───────────────────────╮
-│ gg-proj  ⎇ main  ↑1  ✎ 3 changed            ││ ★ ● personal @octocat  ✓ key    │
+│ gg-proj  ⎇ main  ↑1  ± 3 changed            ││ ★ ● personal @octocat  ✓ key    │
 │ as ● personal  Jane Doe <jane@…>            ││   ● work @octocat-work  ✓ key   │
 │ origin git@github-personal:Chenez…/gg.git ✓ ││                                 │
 ╰─────────────────────────────────────────────╯╰─────────────────────────────────╯
@@ -84,7 +84,6 @@ Run `gg` with no arguments in a terminal. If no profiles exist, it offers to run
 | | `f` | Default profile | `gg default` |
 | | `n` / `m` / `d` | Add / edit / remove profile | `gg profile …` |
 | | `t` | Test | `gg ssh test` |
-| | `y` | Sync config | `gg ssh sync` |
 | | `k` | Generate key | `gg ssh keygen` |
 | | `v` | Public key | `gg ssh pubkey` |
 | | `i` | Setup wizard | `gg setup` |
@@ -121,7 +120,7 @@ gg clone [-p|--profile <profile>] <repo> [dir] [git clone options…]
 - another profile's alias on the same host (`git@github-work:…`) → rewritten to the selected profile
 - a URL on another host, or a local path → cloned unchanged (with a warning for other hosts)
 
-`-p` can appear anywhere, and all other options go to `git clone` (`--depth 1`, `-b main`, `--recurse-submodules`, `--bare`, …). After a successful clone, the profile is applied to the new repository.
+`-p` can appear anywhere, and all other options go to `git clone` (`--depth 1`, `-b main`, `--recurse-submodules`, `--bare`, …). After a successful clone, the profile is applied to the new repository. In a terminal, `gg` then asks whether to switch to it: in the dashboard, the Git column becomes available right away; since a program cannot change its parent shell's directory, `gg clone` (or leaving the dashboard) opens a new shell in the repository, and `exit` returns to where you were.
 
 ### Remotes
 
@@ -138,7 +137,7 @@ gg clone [-p|--profile <profile>] <repo> [dir] [git clone options…]
 | Command | Description |
 |---|---|
 | `gg profile list` | All profiles; `★` marks the default |
-| `gg profile add <name> [fields]` | Creates a profile, prompting for anything not given. Prints the next steps (keygen, sync, test) |
+| `gg profile add <name> [fields]` | Creates a profile, prompting for anything not given (starting from a [`gh`](#github-cli) account if you pick one; given fields still win). Prints the next steps (keygen, test) |
 | `gg profile edit <name> [fields]` | Updates the given fields, or prompts for all fields if none are given |
 | `gg profile remove <name>` | Deletes the profile (keys and SSH config are kept) |
 
@@ -150,8 +149,8 @@ Profile names may contain letters, digits, `-` and `_`. SSH aliases must be uniq
 
 | Command | Description |
 |---|---|
-| `gg ssh sync` | Adds a `Host` entry for each profile whose alias is missing from `~/.ssh/config` (see [configuration](configuration.md#ssh-config)) |
-| `gg ssh keygen <profile> [--no-passphrase]` | Runs `ssh-keygen -t ed25519 -C <email>` for the profile's key path. Refuses to overwrite, creates `~/.ssh` with mode 700, then prints the public key and where to add it |
+| `gg ssh sync` | Reports how `~/.ssh/config` matches the profiles. Missing `Host` entries are added automatically by every `gg` command, so this is only needed to see the details (see [configuration](configuration.md#ssh-config)) |
+| `gg ssh keygen <profile> [--no-passphrase]` | Runs `ssh-keygen -t ed25519 -C <email>` for the profile's key path. Refuses to overwrite, creates `~/.ssh` with mode 700, then prints the public key and offers to add it with [`gh`](#github-cli), or says where to add it |
 | `gg ssh pubkey <profile>` | Prints the public key |
 | `gg ssh test [profile]` | Runs `ssh -T git@<alias>` for one or all profiles and reports the account. Fails if it differs from `username`. Exits 1 if any test fails |
 
@@ -159,12 +158,22 @@ Profile names may contain letters, digits, `-` and `_`. SSH aliases must be uniq
 
 `gg setup` is a wizard that:
 
-1. Imports existing `Host` entries from `~/.ssh/config` that point to a key, offering them as profiles.
-2. Asks for the author name and email of each profile, and lets you add more.
-3. Sets the default profile.
-4. Offers to generate missing keys.
-5. Offers to add missing SSH aliases (with a backup).
-6. Offers to test the connections.
+1. Imports existing `Host` entries from `~/.ssh/config` that point to a key, offering them as profiles. If `gh` is logged in to accounts on that host, it asks which one the entry signs in as and fills in the details from it.
+2. Offers each [GitHub CLI](#github-cli) account that has no profile yet as a new profile.
+3. Asks for the author name and email of each profile, and lets you add more.
+4. Sets the default profile.
+5. Offers to generate missing keys, and to add them to GitHub with `gh`.
+6. Adds missing SSH aliases to `~/.ssh/config` (with a backup).
+7. Offers to test the connections.
+
+### GitHub CLI
+
+If the [GitHub CLI](https://cli.github.com) (`gh`) is installed and logged in, `gg` uses its accounts. It reads them from `gh`'s `hosts.yml` and never changes which account is active in `gh`, except briefly as described below.
+
+- **Import:** `gg setup`, the dashboard's *Add profile* and `gg profile add <name>` (when author and email aren't given) offer every `gh` account without a matching profile (same host and username). The profile is pre-filled from the account: username, host, name, and the public email, or GitHub's private no-reply address (`<id>+<login>@users.noreply.github.com`) when none is public. Every field can be changed in the prompts.
+- **Adding keys:** after generating a key (setup, `gg ssh keygen`, dashboard *Generate key*) or in the dashboard's *Public key*, `gg` offers to add the key to the profile's account with `gh ssh-key add`, using that account's own token. `gh auth login` doesn't grant the `admin:public_key` permission this needs, so the first time `gg` offers to run `gh auth refresh -s admin:public_key` (a browser sign-in). `gh` can only refresh its active account, so `gg` switches to the profile's account for the sign-in and switches back afterwards.
+
+Without `gh`, or for profiles without a matching `gh` account, `gg` prints the key and the page to paste it into.
 
 ### Git passthrough
 
@@ -212,8 +221,9 @@ gg whoami && gg ssh test
 
 ```bash
 gg profile add client --author "Your Name" --email you@client.com --username you-client
-gg ssh keygen client           # paste the printed key into GitHub → Settings → SSH keys
-gg ssh sync && gg ssh test client
+gg ssh keygen client           # adds the key with gh if it is logged in as you-client,
+                               # otherwise paste the printed key into GitHub → Settings → SSH keys
+gg ssh test client
 ```
 
 **Start a new project and publish it**

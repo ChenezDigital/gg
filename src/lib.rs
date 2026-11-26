@@ -3,6 +3,7 @@
 
 pub mod commands;
 pub mod config;
+pub mod gh;
 pub mod git;
 pub mod interactive;
 pub mod ssh;

@@ -131,8 +131,10 @@ fn ssh_sync_preserves_user_entries() {
     let mine = "Host github-personal\n    HostName github.com\n    User git\n    IdentityFile ~/.ssh/github_personal\n    IdentitiesOnly yes\n";
     fs::write(h.join(".ssh/config"), mine).unwrap();
 
-    let out = e.ok(h, &["ssh", "sync"]);
-    assert!(out.contains("+ github-work"), "{out}");
+    // Any gg command adds the missing alias on its own.
+    let out = e.gg(h, &["whoami"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("+ github-work"), "{err}");
     let cfg = fs::read_to_string(h.join(".ssh/config")).unwrap();
     assert!(cfg.contains(mine));
     assert_eq!(cfg.matches("Host github-personal").count(), 1);
@@ -141,11 +143,12 @@ fn ssh_sync_preserves_user_entries() {
     );
     assert_eq!(fs::read_to_string(h.join(".ssh/config.gg-backup")).unwrap(), mine);
 
-    assert!(e.ok(h, &["ssh", "sync"]).contains("up to date"));
+    let out = e.gg(h, &["ssh", "sync"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("up to date"));
     assert_eq!(fs::read_to_string(h.join(".ssh/config")).unwrap(), cfg);
 
+    // Removing a profile drops its managed entry without an explicit sync.
     e.ok(h, &["profile", "remove", "work"]);
-    e.ok(h, &["ssh", "sync"]);
     assert_eq!(fs::read_to_string(h.join(".ssh/config")).unwrap(), mine);
 }
 

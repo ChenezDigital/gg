@@ -6,7 +6,7 @@
 |---|---|---|
 | `~/.config/gg/config.toml` | `gg setup`, `gg profile`, `gg default` | Profiles and the default profile |
 | `<repo>/.git/config` | `gg use`, `gg clone`, `gg remote`, push/pull/fetch repair | `user.name`, `user.email`, `gg.profile`, remote URLs |
-| `~/.ssh/config` | `gg ssh sync`, `gg setup` | A managed block of `Host` entries (after asking) |
+| `~/.ssh/config` | Every `gg` command, when profiles and the file disagree | A managed block of `Host` entries |
 
 It never writes `~/.gitconfig` or any other global Git setting.
 
@@ -52,7 +52,7 @@ Rules (checked when saving through `gg`, and when a profile is used):
 - Each `ssh_alias` belongs to one profile.
 - `default` names an existing profile, or is omitted.
 
-You can edit the file by hand; the next `gg` command uses it. After changing `hostname`, `ssh_alias` or `ssh_key`, run `gg ssh sync`.
+You can edit the file by hand; the next `gg` command uses it. After changing `hostname`, `ssh_alias` or `ssh_key`, the next `gg` command updates `~/.ssh/config`.
 
 ### Other hosts
 
@@ -86,7 +86,7 @@ Remotes are rewritten only when they point at the profile's `hostname`, its alia
 
 ## SSH config
 
-`gg ssh sync` compares the profiles with `~/.ssh/config`:
+Every `gg` command (and every profile change) compares the profiles with `~/.ssh/config` and writes it only when something is missing or stale. `gg ssh sync` shows the full report:
 
 - **Your entries are never edited.** If a `Host` line already defines a profile's alias, that entry is used as is. If its `HostName` or `IdentityFile` differ from the profile, `gg` prints a warning so you can fix it yourself.
 - **Missing aliases** are written into a managed block:

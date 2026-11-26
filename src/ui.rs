@@ -47,7 +47,7 @@ const FANCY: Glyphs = Glyphs {
     pointer: "▶",
     enter: "⏎",
     branch: "⎇",
-    edit: "✎",
+    edit: "±",
 };
 
 /// Stand-ins from the WGL4 set, which every Windows console font covers.
