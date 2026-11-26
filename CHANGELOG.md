@@ -9,6 +9,8 @@ All notable changes to gg are documented here. The format follows [Keep a Change
 ### Fixed
 
 - Windows: the dashboard no longer shows boxes (`⍰`) or misaligned profile rows in the classic console window used by Windows PowerShell 5.1 and `cmd`. gg now uses symbols every Windows console font has (`*`, `√`, `×`, `►`) there; Windows Terminal, VS Code and ConEmu keep the full set. `GG_GLYPHS=plain|fancy` overrides the choice.
+- Windows: Ctrl-C now cancels prompts opened from the dashboard (setup wizard, profile questions such as "Add another profile?") instead of leaving you stuck until you answer.
+- Ctrl-C at a prompt now always exits with status 130; it sometimes printed `gg: IO error: read interrupted` and exited with 1.
 
 ## [0.1.0] - 2026-11-25
 

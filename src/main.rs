@@ -262,6 +262,8 @@ fn main() -> ExitCode {
             }
             ExitCode::from(code.clamp(0, 255) as u8)
         }
+        // A Ctrl-C can fail the pending read before the signal handler exits; report it the same way.
+        Err(e) if interactive::is_interrupt(&e) => ExitCode::from(130),
         Err(e) => {
             eprintln!("gg: {e:#}");
             ExitCode::from(1)

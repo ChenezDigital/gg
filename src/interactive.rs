@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::IsTerminal;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Result, bail};
 use dialoguer::theme::ColorfulTheme;
@@ -62,7 +63,60 @@ pub fn restore_tty(saved: Option<TtyState>) {
     }
 }
 
-pub static DASHBOARD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static DASHBOARD: AtomicBool = AtomicBool::new(false);
+static PROMPTING: AtomicBool = AtomicBool::new(false);
+static CANCELLED: AtomicBool = AtomicBool::new(false);
+
+/// Runs a dialoguer prompt so that a Ctrl-C in the dashboard cancels it as `ErrorKind::Interrupted`.
+/// On Unix the read itself fails that way. On Windows the console turns Ctrl-C into a control
+/// event and the read keeps blocking, so the handler marks the prompt cancelled and feeds it an
+/// Enter key, which ends every prompt kind we use.
+fn prompt<T>(f: impl FnOnce() -> dialoguer::Result<T>) -> Result<T> {
+    CANCELLED.store(false, Ordering::SeqCst);
+    PROMPTING.store(true, Ordering::SeqCst);
+    let r = f();
+    PROMPTING.store(false, Ordering::SeqCst);
+    if CANCELLED.swap(false, Ordering::SeqCst) {
+        return Err(std::io::Error::from(std::io::ErrorKind::Interrupted).into());
+    }
+    Ok(r?)
+}
+
+#[cfg(windows)]
+fn send_enter_key() {
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, INPUT_RECORD, INPUT_RECORD_0, KEY_EVENT, KEY_EVENT_RECORD, KEY_EVENT_RECORD_0, STD_INPUT_HANDLE,
+        WriteConsoleInputW,
+    };
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_RETURN;
+
+    let key = |down| INPUT_RECORD {
+        EventType: KEY_EVENT as u16,
+        Event: INPUT_RECORD_0 {
+            KeyEvent: KEY_EVENT_RECORD {
+                bKeyDown: down,
+                wRepeatCount: 1,
+                wVirtualKeyCode: VK_RETURN,
+                wVirtualScanCode: 0x1C,
+                uChar: KEY_EVENT_RECORD_0 {
+                    UnicodeChar: u16::from(b'\r'),
+                },
+                dwControlKeyState: 0,
+            },
+        },
+    };
+    let records = [key(1), key(0)];
+    let mut written = 0;
+    // SAFETY: `records` outlives the call and its length matches the count passed.
+    unsafe {
+        WriteConsoleInputW(
+            GetStdHandle(STD_INPUT_HANDLE),
+            records.as_ptr(),
+            records.len() as u32,
+            &mut written,
+        );
+    }
+}
 
 /// On Ctrl-C (prompts raise SIGINT even in raw mode), put the terminal back the way we found it:
 /// original termios (echo, line mode) and a visible cursor.
@@ -72,7 +126,12 @@ fn install_interrupt_handler() {
         let saved = save_tty();
         let _ = ctrlc::set_handler(move || {
             // In the dashboard a Ctrl-C only cancels the current prompt (see `run_action`).
-            if DASHBOARD.load(std::sync::atomic::Ordering::SeqCst) {
+            if DASHBOARD.load(Ordering::SeqCst) {
+                if PROMPTING.load(Ordering::SeqCst) {
+                    CANCELLED.store(true, Ordering::SeqCst);
+                    #[cfg(windows)]
+                    send_enter_key();
+                }
                 return;
             }
             restore_tty(saved);
@@ -92,30 +151,43 @@ pub fn input_text(prompt: &str, default: &str) -> Result<String> {
     input(prompt, default, false)
 }
 
-fn input(prompt: &str, default: &str, allow_empty: bool) -> Result<String> {
+fn input(label: &str, default: &str, allow_empty: bool) -> Result<String> {
     let t = theme();
+    // Empty answers always reach the validator (rather than dialoguer silently re-asking), so the
+    // Enter key sent on a Windows Ctrl-C ends the prompt even for required fields.
     let mut i = Input::<String>::with_theme(&t)
-        .with_prompt(prompt)
-        .allow_empty(allow_empty);
+        .with_prompt(label)
+        .allow_empty(true)
+        .validate_with(|v: &String| {
+            if allow_empty || !v.trim().is_empty() || CANCELLED.load(Ordering::SeqCst) {
+                Ok(())
+            } else {
+                Err("a value is required")
+            }
+        });
     if !default.is_empty() {
         i = i.default(default.to_string());
     }
-    Ok(i.interact_text()?.trim().to_string())
+    Ok(prompt(|| i.interact_text())?.trim().to_string())
 }
 
-fn confirm(prompt: &str, default: bool) -> Result<bool> {
-    Ok(Confirm::with_theme(&theme())
-        .with_prompt(prompt)
-        .default(default)
-        .interact()?)
+fn confirm(label: &str, default: bool) -> Result<bool> {
+    prompt(|| {
+        Confirm::with_theme(&theme())
+            .with_prompt(label)
+            .default(default)
+            .interact()
+    })
 }
 
-fn select(prompt: &str, items: &[String], default: usize) -> Result<Option<usize>> {
-    Ok(Select::with_theme(&theme())
-        .with_prompt(prompt)
-        .items(items)
-        .default(default)
-        .interact_opt()?)
+fn select(label: &str, items: &[String], default: usize) -> Result<Option<usize>> {
+    prompt(|| {
+        Select::with_theme(&theme())
+            .with_prompt(label)
+            .items(items)
+            .default(default)
+            .interact_opt()
+    })
 }
 
 pub fn prompt_profile(name: &str, mut p: Profile) -> Result<Profile> {
@@ -340,7 +412,7 @@ pub fn run_action(cfg: &mut Config, action: Action) -> Result<bool> {
     }
 }
 
-fn is_interrupt(e: &anyhow::Error) -> bool {
+pub fn is_interrupt(e: &anyhow::Error) -> bool {
     e.chain().any(|c| {
         let io = match c.downcast_ref::<dialoguer::Error>() {
             Some(dialoguer::Error::IO(io)) => Some(io),
